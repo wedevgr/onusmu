@@ -1,31 +1,47 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { radius, typography, useTheme } from '../theme';
+import { radius, spacing, typography, useTheme } from '../theme';
 
-const LABELS: Record<string, string> = {
-  pending: 'Queued',
-  transcribing: 'Transcribing',
-  embedding: 'Embedding',
-  completed: 'Done',
-  failed: 'Failed',
-};
+interface ChunkStatusBadgeProps {
+  status: string;
+}
 
-export function ChunkStatusBadge({ status }: { status: string }): React.JSX.Element | null {
+interface BadgeStyle {
+  label: string;
+  foreground: keyof ReturnType<typeof useTheme>['colors'];
+  background: keyof ReturnType<typeof useTheme>['colors'];
+}
+
+function resolve(status: string): BadgeStyle {
+  switch (status.toLowerCase()) {
+    case 'completed':
+    case 'done':
+    case 'transcribed':
+      return { label: 'Transcribed', foreground: 'success', background: 'surfaceMuted' };
+    case 'processing':
+    case 'transcribing':
+      return { label: 'Processing', foreground: 'warning', background: 'surfaceMuted' };
+    case 'failed':
+    case 'error':
+      return { label: 'Failed', foreground: 'danger', background: 'dangerSurface' };
+    default:
+      return { label: 'Pending', foreground: 'textMuted', background: 'surfaceMuted' };
+  }
+}
+
+export function ChunkStatusBadge({ status }: ChunkStatusBadgeProps): React.JSX.Element {
   const theme = useTheme();
-  const color =
-    status === 'completed'
-      ? theme.colors.success
-      : status === 'failed'
-        ? theme.colors.danger
-        : status === 'pending'
-          ? theme.colors.warning
-          : theme.colors.primary;
-  const label = LABELS[status] ?? status;
-  if (status === 'completed') return null;
-
+  const badge = resolve(status);
   return (
-    <View style={[styles.badge, { borderColor: color }]}>
-      <Text style={[typography.caption, { color }]}>{label}</Text>
+    <View
+      style={[
+        styles.badge,
+        { backgroundColor: theme.colors[badge.background] },
+      ]}
+    >
+      <Text style={[typography.caption, styles.label, { color: theme.colors[badge.foreground] }]}>
+        {badge.label}
+      </Text>
     </View>
   );
 }
@@ -33,10 +49,12 @@ export function ChunkStatusBadge({ status }: { status: string }): React.JSX.Elem
 const styles = StyleSheet.create({
   badge: {
     alignSelf: 'flex-start',
-    borderWidth: 1,
     borderRadius: radius.pill,
-    paddingHorizontal: 8,
+    paddingHorizontal: spacing.sm,
     paddingVertical: 2,
-    marginTop: 6,
+    marginTop: spacing.xs,
+  },
+  label: {
+    fontWeight: '600',
   },
 });

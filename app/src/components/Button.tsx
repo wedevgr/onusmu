@@ -1,28 +1,45 @@
 import React from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
-import { radius, spacing, typography, useTheme } from '../theme';
+import { radius, spacing, useTheme, typography } from '../theme';
 
-interface Props {
+type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
+
+interface ButtonProps {
   title: string;
   onPress: () => void;
-  variant?: 'primary' | 'danger' | 'ghost';
-  loading?: boolean;
+  variant?: Variant;
   disabled?: boolean;
+  loading?: boolean;
+  compact?: boolean;
 }
 
 export function Button({
   title,
   onPress,
   variant = 'primary',
-  loading = false,
   disabled = false,
-}: Props): React.JSX.Element {
+  loading = false,
+  compact = false,
+}: ButtonProps): React.JSX.Element {
   const theme = useTheme();
-  const colors = {
-    primary: { bg: theme.colors.primary, text: theme.colors.onPrimary },
-    danger: { bg: theme.colors.danger, text: '#FFFFFF' },
-    ghost: { bg: 'transparent', text: theme.colors.primary },
-  }[variant];
+
+  const backgroundColor =
+    variant === 'primary'
+      ? theme.colors.primary
+      : variant === 'danger'
+        ? theme.colors.danger
+        : variant === 'secondary'
+          ? theme.colors.surfaceMuted
+          : 'transparent';
+
+  const textColor =
+    variant === 'primary'
+      ? theme.colors.onPrimary
+      : variant === 'danger'
+        ? '#FFFFFF'
+        : variant === 'secondary'
+          ? theme.colors.text
+          : theme.colors.primary;
 
   return (
     <Pressable
@@ -31,14 +48,14 @@ export function Button({
       disabled={disabled || loading}
       style={({ pressed }) => [
         styles.base,
-        variant === 'ghost' && styles.ghost,
-        { backgroundColor: colors.bg, borderColor: theme.colors.border, opacity: pressed || disabled ? 0.7 : 1 },
+        compact && styles.compact,
+        { backgroundColor, opacity: disabled ? 0.5 : pressed ? 0.85 : 1 },
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={colors.text} />
+        <ActivityIndicator color={textColor} />
       ) : (
-        <Text style={[typography.label, styles.label, { color: colors.text }]}>{title}</Text>
+        <Text style={[typography.label, styles.label, { color: textColor }]}>{title}</Text>
       )}
     </Pressable>
   );
@@ -46,13 +63,19 @@ export function Button({
 
 const styles = StyleSheet.create({
   base: {
+    minHeight: 50,
     borderRadius: radius.pill,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 52,
+    paddingHorizontal: spacing.lg,
+    marginVertical: spacing.xs,
   },
-  ghost: { borderWidth: 1 },
-  label: { fontSize: 16 },
+  compact: {
+    minHeight: 38,
+    paddingHorizontal: spacing.md,
+    alignSelf: 'flex-start',
+  },
+  label: {
+    fontSize: 16,
+  },
 });
