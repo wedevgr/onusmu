@@ -5,6 +5,13 @@ export const pool = new Pool({
   connectionString: config.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
   max: 10,
+  keepAlive: true,
+});
+
+// Idle clients in the pool can emit errors (e.g. the Supabase pooler resetting
+// long-lived connections). Without this handler those crashes kill the process.
+pool.on('error', (err) => {
+  console.error('[db] idle pool client error:', err.message);
 });
 
 export async function query<T extends QueryResultRow = QueryResultRow>(

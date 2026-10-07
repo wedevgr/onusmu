@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
-  ScrollView,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -16,152 +15,210 @@ import { Card } from '../components/Card';
 import { Screen } from '../components/Screen';
 import { radius, spacing, typography, useTheme } from '../theme';
 
-type Mode = 'login' | 'register' | 'reset';
+type Mode = 'login' | 'register';
 
-function messageFrom(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return 'Something went wrong. Please try again.';
-}
-
-export function AuthScreen(): React.JSX.Element {
+export default function AuthScreen(): React.JSX.Element {
   const theme = useTheme();
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  async function submit(): Promise<void> {
+  const run = async (action: () => Promise<{ error: { message: string } | null }>) => {
+    setBusy(true);
     setError(null);
     setNotice(null);
-    if (!email.trim()) {
-      setError('Please enter your email address.');
-      return;
-    }
-    if (mode !== 'reset' && password.length < 6) {
-      setError('Password must be at least 6 characters.');
-      return;
-    }
-    setLoading(true);
     try {
-      if (mode === 'login') {
-        const { error: err } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-        if (err) setError(err.message);
-      } else if (mode === 'register') {
-        const { data, error: err } = await supabase.auth.signUp({ email: email.trim(), password });
-        if (err) {
-          setError(err.message);
-        } else if (!data.session) {
-          setNotice('Registration successful. Check your email to confirm your account, then log in.');
-          setMode('login');
-        }
-      } else {
-        const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim());
-        if (err) {
-          setError(err.message);
-        } else {
-          setNotice('If an account exists for this email, a reset link is on its way.');
-        }
+      const { error: authError } = await action();
+      if (authError) {
+        setError(authError.message);
       }
-    } catch (err) {
-      setError(messageFrom(err));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Something went wrong.');
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
-  }
+  };
 
-  const title = mode === 'login' ? 'Welcome back' : mode === 'register' ? 'Create your account' : 'Reset password';
+  const submit = () => {
+    if (mode === 'login') {
+      void run(() => supabase.auth.signInWithPassword({ email, password }));
+    } else {
+      void run(async () => {
+        const result = await supabase.auth.signUp({ email, password });
+        if (!result.error && result.data.session === null) {
+          setNotice('Check your email to confirm your account, then log in.');
+        }
+        return { error: result.error };
+      });
+    }
+  };
+
+  const sendReset = () => {
+    void run(async () => {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email);
+      if (!resetError) {
+        setNotice('Check your inbox for a password reset link.');
+        setForgotOpen(false);
+      }
+      return { error: resetError };
+    });
+  };
 
   return (
     <Screen>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={styles.header}>
           <Text style={[typography.title, { color: theme.colors.text }]}>AI Memory</Text>
-          <Text style={[typography.body, styles.subtitle, { color: theme.colors.textMuted }]}>
+          <Text style={[typography.body, { color: theme.colors.textMuted }]}>
             Your personal, searchable memory.
           </Text>
+        </View>
 
-          {!isSupabaseConfigured ? (
-            <Card style={{ borderColor: theme.colors.warning }}>
-              <Text style={[typography.label, { color: theme.colors.warning }]}>
-                Supabase is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in app/.env.
+        {!isSupabaseConfigured ? (
+          <Card>
+            <Text style={[typography.label, { color: theme.colors.warning }]}>
+              Missing configuration
+            </Text>
+            <Text style={[typography.body, styles.noticeBody, { color: theme.colors.textMuted }]}>
+              Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in your .env file.
+            </Text>
+          </Card>
+        ) : null}
+
+        <View style={[styles.segment, { backgroundColor: theme.colors.surfaceMuted }]}>
+          {(['login', 'register'] as const).map((item) => (
+            <Pressable
+              key={item}
+              onPress={() => setMode(item)}
+              style={[
+                styles.segmentItem,
+                mode === item && { backgroundColor: theme.colors.surface },
+              ]}
+            >
+              <Text
+                style={[
+                  typography.label,
+                  { color: mode === item ? theme.colors.text : theme.colors.textMuted },
+                ]}
+              >
+                {item === 'login' ? 'Login' : 'Register'}
               </Text>
-            </Card>
+            </Pressable>
+          ))}
+        </View>
+
+        <Card>
+          <TextInput
+            style={[
+              styles.input,
+              { borderColor: theme.colors.border, color: theme.colors.text },
+            ]}
+            placeholder="Email"
+            placeholderTextColor={theme.colors.textMuted}
+            autoCapitalize="none"
+            autoComplete="email"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+          />
+          <TextInput
+            style={[
+              styles.input,
+              { borderColor: theme.colors.border, color: theme.colors.text },
+            ]}
+            placeholder="Password"
+            placeholderTextColor={theme.colors.textMuted}
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+          />
+
+          {error ? (
+            <Text style={[typography.label, styles.feedback, { color: theme.colors.danger }]}>
+              {error}
+            </Text>
+          ) : null}
+          {notice ? (
+            <Text style={[typography.label, styles.feedback, { color: theme.colors.success }]}>
+              {notice}
+            </Text>
           ) : null}
 
-          <Card>
-            <Text style={[typography.heading, styles.cardTitle, { color: theme.colors.text }]}>{title}</Text>
+          <Button
+            title={mode === 'login' ? 'Login' : 'Create account'}
+            onPress={submit}
+            loading={busy}
+            disabled={email.length === 0 || password.length === 0}
+          />
 
-            <TextInput
-              style={[styles.input, { borderColor: theme.colors.border, color: theme.colors.text, backgroundColor: theme.colors.surfaceMuted }]}
-              placeholder="Email"
-              placeholderTextColor={theme.colors.textMuted}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              value={email}
-              onChangeText={setEmail}
-            />
-            {mode !== 'reset' ? (
-              <TextInput
-                style={[styles.input, { borderColor: theme.colors.border, color: theme.colors.text, backgroundColor: theme.colors.surfaceMuted }]}
-                placeholder="Password"
-                placeholderTextColor={theme.colors.textMuted}
-                secureTextEntry
-                value={password}
-                onChangeText={setPassword}
-              />
-            ) : null}
-
-            {error ? <Text style={[typography.label, { color: theme.colors.danger }]}>{error}</Text> : null}
-            {notice ? <Text style={[typography.label, { color: theme.colors.success }]}>{notice}</Text> : null}
-
-            <View style={styles.submit}>
-              <Button
-                title={mode === 'login' ? 'Log in' : mode === 'register' ? 'Register' : 'Send reset link'}
-                onPress={() => void submit()}
-                loading={loading}
-              />
+          {forgotOpen ? (
+            <View style={styles.forgotBox}>
+              <Text style={[typography.body, { color: theme.colors.textMuted }]}>
+                A reset link will be sent to {email || 'your email'}.
+              </Text>
+              <Button title="Send reset link" variant="secondary" onPress={sendReset} loading={busy} />
             </View>
-          </Card>
-
-          <View style={styles.switchRow}>
-            {mode !== 'login' ? (
-              <Text style={[typography.label, styles.switchLink, { color: theme.colors.primary }]} onPress={() => { setMode('login'); setError(null); }}>
-                Log in
-              </Text>
-            ) : null}
-            {mode !== 'register' ? (
-              <Text style={[typography.label, styles.switchLink, { color: theme.colors.primary }]} onPress={() => { setMode('register'); setError(null); }}>
-                Create account
-              </Text>
-            ) : null}
-            {mode !== 'reset' ? (
-              <Text style={[typography.label, styles.switchLink, { color: theme.colors.primary }]} onPress={() => { setMode('reset'); setError(null); }}>
+          ) : (
+            <Pressable onPress={() => setForgotOpen(true)}>
+              <Text style={[typography.label, styles.forgotLink, { color: theme.colors.primary }]}>
                 Forgot password?
               </Text>
-            ) : null}
-          </View>
-        </ScrollView>
+            </Pressable>
+          )}
+        </Card>
       </KeyboardAvoidingView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  scroll: { flexGrow: 1, justifyContent: 'center', paddingVertical: spacing.xl },
-  subtitle: { marginTop: spacing.xs, marginBottom: spacing.xl },
-  cardTitle: { marginBottom: spacing.md },
+  flex: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+  },
+  segment: {
+    flexDirection: 'row',
+    borderRadius: radius.pill,
+    padding: 4,
+    marginBottom: spacing.md,
+  },
+  segmentItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+  },
   input: {
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: radius.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: 12,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.md,
     fontSize: 16,
   },
-  submit: { marginTop: spacing.sm },
-  switchRow: { flexDirection: 'row', justifyContent: 'center', gap: spacing.lg, marginTop: spacing.lg },
-  switchLink: { padding: spacing.xs },
+  feedback: {
+    marginBottom: spacing.sm,
+  },
+  forgotBox: {
+    marginTop: spacing.sm,
+    gap: spacing.sm,
+  },
+  forgotLink: {
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+  noticeBody: {
+    marginTop: spacing.xs,
+  },
 });

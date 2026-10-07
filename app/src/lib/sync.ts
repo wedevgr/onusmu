@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState } from 'react-native';
 import { api, ApiError } from '../api/client';
 import { useSyncStore } from '../stores/sync';
 import {
@@ -19,10 +20,12 @@ const MAX_ATTEMPTS = 8;
 interface LocalSession {
   localId: string;
   startedAt: string;
+  serverId?: string;
 }
 
 let processing = false;
 let timer: ReturnType<typeof setInterval> | null = null;
+let appStateSubscription: { remove: () => void } | null = null;
 
 async function readLocalSessions(): Promise<LocalSession[]> {
   try {
@@ -59,8 +62,15 @@ export async function enqueueChunk(input: EnqueueInput): Promise<void> {
 async function ensureRemoteSession(entry: OutboxEntry): Promise<void> {
   const sessions = await readLocalSessions();
   const known = sessions.find((s) => s.localId === entry.sessionLocalId);
+  if (known?.serverId) return;
   const startedAt = known?.startedAt ?? entry.startedAt;
-  await api.createSession({ clientId: entry.sessionLocalId, startedAt });
+  const created = await api.createSession({ clientId: entry.sessionLocalId, startedAt });
+  const next = known
+    ? sessions.map((s) =>
+        s.localId === entry.sessionLocalId ? { ...s, serverId: created.id } : s,
+      )
+    : [...sessions, { localId: entry.sessionLocalId, startedAt, serverId: created.id }];
+  await AsyncStorage.setItem(SESSIONS_KEY, JSON.stringify(next.slice(-100)));
 }
 
 async function processEntry(entry: OutboxEntry): Promise<'ok' | 'retry-later' | 'done'> {
@@ -131,12 +141,21 @@ export function startSyncLoop(): void {
   timer = setInterval(() => {
     void processOutbox();
   }, SYNC_INTERVAL_MS);
+  appStateSubscription = AppState.addEventListener('change', (state) => {
+    if (state === 'active') {
+      void processOutbox();
+    }
+  });
 }
 
 export function stopSyncLoop(): void {
   if (timer) {
     clearInterval(timer);
     timer = null;
+  }
+  if (appStateSubscription) {
+    appStateSubscription.remove();
+    appStateSubscription = null;
   }
 }
 

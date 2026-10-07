@@ -1,23 +1,43 @@
 import React from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme';
 
-interface Props {
+interface ScreenProps {
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
+  padded?: boolean;
 }
 
-export function Screen({ children, style }: Props): React.JSX.Element {
+export function Screen({ children, style, padded = true }: ScreenProps): React.JSX.Element {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]} edges={['top', 'bottom']}>
-      <View style={[styles.content, style]}>{children}</View>
-    </SafeAreaView>
+    <View
+      style={[
+        styles.base,
+        {
+          backgroundColor: theme.colors.background,
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
+        },
+        style,
+      ]}
+    >
+      <View style={padded ? styles.padded : styles.flush}>{children}</View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
-  content: { flex: 1, paddingHorizontal: 20 },
+  base: {
+    flex: 1,
+  },
+  padded: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+  flush: {
+    flex: 1,
+  },
 });

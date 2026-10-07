@@ -1,96 +1,130 @@
-import React, { useEffect, useState } from 'react';
-import { Alert, FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  CompositeNavigationProp,
-  useNavigation,
-} from '@react-navigation/native';
-import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+  Alert,
+  FlatList,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import * as Crypto from 'expo-crypto';
+import type { RootStackParamList, TabParamList } from '../navigation/RootNavigator';
 import { api } from '../api/client';
 import type { SessionSummary } from '../api/types';
-import { Button } from '../components/Button';
-import { Card } from '../components/Card';
-import { Screen } from '../components/Screen';
-import { beginRecording } from '../lib/recordingSession';
-import {
-  formatClock,
-  formatDayLabel,
-  formatDurationSeconds,
-  startOfTodayIso,
-} from '../lib/time';
-import type { MainTabParamList, RootStackParamList } from '../navigation/types';
+import { recorder } from '../lib/recorder';
+import * as outbox from '../lib/outbox';
+import { triggerSync } from '../lib/sync';
 import { useAuthStore } from '../stores/auth';
 import { useRecordingStore } from '../stores/recording';
-import { selectSyncStatus, useSyncStore } from '../stores/sync';
-import { spacing, typography, useTheme } from '../theme';
+import { useSyncStore, selectSyncStatus } from '../stores/sync';
+import { formatClock, formatDayLabel, formatDurationSeconds, startOfTodayIso } from '../lib/time';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
+import { EmptyState } from '../components/EmptyState';
+import { RecordingDot } from '../components/RecordingDot';
+import { Screen } from '../components/Screen';
+import { radius, spacing, typography, useTheme } from '../theme';
 
-type NavigationProp = CompositeNavigationProp<
-  BottomTabNavigationProp<MainTabParamList, 'Home'>,
-  NativeStackNavigationProp<RootStackParamList>
->;
+type Props = BottomTabScreenProps<TabParamList, 'Home'>;
 
-function formatHM(totalSeconds: number): string {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.round((totalSeconds % 3600) / 60);
-  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+function dayOffsetFor(iso: string): number {
+  const sessionDay = new Date(iso);
+  sessionDay.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((today.getTime() - sessionDay.getTime()) / 86400000);
 }
 
-export function HomeScreen(): React.JSX.Element {
+export default function HomeScreen({ navigation }: Props): React.JSX.Element {
   const theme = useTheme();
-  const navigation = useNavigation<NavigationProp>();
-  const user = useAuthStore((s) => s.user);
-  const { active, chunkCount } = useRecordingStore();
+  const rootNav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const user = useAuthStore((state) => state.user);
+  const recording = useRecordingStore();
   const syncStatus = useSyncStore(selectSyncStatus);
-  const [todaySeconds, setTodaySeconds] = useState(0);
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [askText, setAskText] = useState('');
-  const [starting, setStarting] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load(): Promise<void> {
-      try {
-        const { sessions: todaySessions } = await api.listSessions({ from: startOfTodayIso() });
-        const { sessions: recent } = await api.listSessions();
-        if (cancelled) return;
-        setTodaySeconds(
-          todaySessions.reduce((sum, s) => sum + Math.max(0, s.durationSeconds ?? 0), 0),
-        );
-        setSessions(recent.slice(0, 5));
-      } catch {
-        // Backend unreachable: keep previous values.
-      }
-    }
-    void load();
-    const timer = setInterval(() => void load(), 30000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
+  const [starting, setStarting] = useState(false);
+  const [question, setQuestion] = useState('');
+  const [todaySeconds, setTodaySeconds] = useState<number | null>(null);
+  const [recent, setRecent] = useState<SessionSummary[]>([]);
+  const [recentError, setRecentError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    api
+      .listSessions({ from: startOfTodayIso() })
+      .then((response) => {
+        const total = response.sessions.reduce((sum, session) => sum + session.durationSeconds, 0);
+        setTodaySeconds(total);
+      })
+      .catch(() => setTodaySeconds(null));
+    api
+      .listSessions()
+      .then((response) => {
+        const sorted = [...response.sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+        setRecent(sorted.slice(0, 5));
+        setRecentError(null);
+      })
+      .catch((e: unknown) => {
+        setRecent([]);
+        setRecentError(e instanceof Error ? e.message : 'Could not load sessions.');
+      });
   }, []);
 
-  async function handleStart(): Promise<void> {
-    if (active) {
-      navigation.navigate('Recording');
-      return;
-    }
+  useEffect(() => {
+    load();
+    const unsubscribe = navigation.addListener('focus', load);
+    return unsubscribe;
+  }, [load, navigation]);
+
+  const startRecording = async (): Promise<void> => {
     setStarting(true);
+    const sessionLocalId = Crypto.randomUUID();
+    const startedAt = new Date().toISOString();
     try {
-      await beginRecording();
-      navigation.navigate('Recording');
-    } catch (err) {
-      Alert.alert('Could not start recording', err instanceof Error ? err.message : String(err));
+      await recorder.start(
+        (chunk) => {
+          useRecordingStore.getState().incrementChunkCount();
+          outbox
+            .enqueue({
+              sessionLocalId,
+              chunkIndex: chunk.index,
+              uri: chunk.uri,
+              startedAt: chunk.startedAt,
+              endedAt: chunk.endedAt,
+            })
+            .then(() => triggerSync())
+            .catch(() => {
+              useRecordingStore.getState().setError('A recorded chunk could not be saved.');
+            });
+        },
+        (message) => useRecordingStore.getState().setError(message),
+      );
+      useRecordingStore.getState().begin(sessionLocalId, startedAt);
+      rootNav.navigate('Recording');
+    } catch (e) {
+      useRecordingStore.getState().reset();
+      Alert.alert('Recording failed', e instanceof Error ? e.message : 'Please try again.');
     } finally {
       setStarting(false);
     }
-  }
+  };
 
-  function handleAsk(): void {
-    const text = askText.trim();
-    if (!text) return;
-    setAskText('');
-    navigation.navigate('Chat', { initialMessage: text });
-  }
+  const handlePrimary = (): void => {
+    if (recording.active) {
+      rootNav.navigate('Recording');
+    } else {
+      void startRecording();
+    }
+  };
+
+  const ask = (): void => {
+    const trimmed = question.trim();
+    if (trimmed.length === 0) return;
+    setQuestion('');
+    navigation.navigate('Chat', { initialMessage: trimmed });
+  };
 
   return (
     <Screen>
@@ -100,82 +134,129 @@ export function HomeScreen(): React.JSX.Element {
       </Text>
 
       <Card style={styles.statusCard}>
-        <Text style={[typography.label, { color: theme.colors.textMuted }]}>
-          Recording: {active ? 'ON' : 'OFF'}
-        </Text>
-        {active ? (
-          <Text style={[typography.caption, { color: theme.colors.textMuted }]}>
-            {chunkCount} chunks captured
+        <View style={styles.statusRow}>
+          {recording.active ? <RecordingDot size={10} /> : null}
+          <Text style={[typography.heading, { color: theme.colors.text }]}>
+            Recording: {recording.active ? 'ON' : 'OFF'}
+          </Text>
+        </View>
+        {recording.active ? (
+          <Text style={[typography.body, styles.muted, { color: theme.colors.textMuted }]}>
+            {recording.chunkCount} chunk{recording.chunkCount === 1 ? '' : 's'} captured ·{' '}
+            {syncStatus.pending} waiting · {syncStatus.uploading ? 1 : 0} uploading
           </Text>
         ) : null}
-        <View style={styles.startWrap}>
-          <Button
-            title={active ? 'Return to recording' : 'Start Recording'}
-            variant={active ? 'danger' : 'primary'}
-            onPress={() => void handleStart()}
-            loading={starting}
-          />
-        </View>
+        <Text style={[typography.body, styles.muted, { color: theme.colors.textMuted }]}>
+          Today: {todaySeconds === null ? '—' : formatDurationSeconds(todaySeconds)} recorded
+        </Text>
+        {recording.error ? (
+          <Text style={[typography.label, { color: theme.colors.danger }]}>{recording.error}</Text>
+        ) : null}
       </Card>
 
-      <Text style={[typography.label, styles.section, { color: theme.colors.textMuted }]}>
-        Today · {formatHM(todaySeconds)} recorded
-      </Text>
-
-      <TextInput
-        style={[styles.ask, { borderColor: theme.colors.border, color: theme.colors.text, backgroundColor: theme.colors.surface }]}
-        placeholder="Ask your memory..."
-        placeholderTextColor={theme.colors.textMuted}
-        value={askText}
-        onChangeText={setAskText}
-        onSubmitEditing={handleAsk}
-        returnKeyType="send"
+      <Button
+        title={recording.active ? 'Stop recording' : 'Start recording'}
+        variant={recording.active ? 'danger' : 'primary'}
+        onPress={handlePrimary}
+        loading={starting}
       />
 
-      <Text style={[typography.label, styles.section, { color: theme.colors.textMuted }]}>
+      <Card>
+        <TextInput
+          style={[styles.askInput, { borderColor: theme.colors.border, color: theme.colors.text }]}
+          placeholder="Ask your memory…"
+          placeholderTextColor={theme.colors.textMuted}
+          value={question}
+          onChangeText={setQuestion}
+          onSubmitEditing={ask}
+          returnKeyType="send"
+        />
+        <Button title="Ask" variant="secondary" compact onPress={ask} disabled={question.trim().length === 0} />
+      </Card>
+
+      <Text style={[typography.heading, styles.sectionTitle, { color: theme.colors.text }]}>
         Recent sessions
       </Text>
-      <FlatList
-        data={sessions}
-        keyExtractor={(item) => item.id}
-        style={styles.list}
-        ListEmptyComponent={
-          <Text style={[typography.body, { color: theme.colors.textMuted }]}>
-            No recordings yet. Press Start Recording to capture your first memory.
-          </Text>
-        }
-        renderItem={({ item }) => (
-          <Card>
-            <Text style={[typography.label, { color: theme.colors.text }]} onPress={() => navigation.navigate('Timeline', { sessionId: item.id })}>
-              {formatDayLabel(item.startedAt)} · {formatClock(item.startedAt)}
-            </Text>
-            <Text style={[typography.caption, { color: theme.colors.textMuted }]}>
-              {formatDurationSeconds(item.durationSeconds ?? 0)} · {item.chunkCount} chunks
-            </Text>
-          </Card>
-        )}
-      />
-
-      <Text style={[typography.caption, styles.syncLine, { color: theme.colors.textMuted }]}>
-        {syncStatus.pending} waiting to upload · {syncStatus.failed} failed
-        {syncStatus.uploading ? ' · uploading…' : ''}
-      </Text>
+      {recentError ? (
+        <EmptyState title="Could not load sessions" message={recentError} />
+      ) : (
+        <FlatList
+          data={recent}
+          keyExtractor={(item) => item.id}
+          style={styles.list}
+          ListEmptyComponent={
+            <EmptyState
+              title="No sessions yet"
+              message="Tap Start recording to capture your first memory."
+            />
+          }
+          renderItem={({ item }) => (
+            <Card>
+              <View style={styles.sessionRow}>
+                <View style={styles.flex}>
+                  <Text style={[typography.label, { color: theme.colors.text }]}>
+                    {formatDayLabel(item.startedAt)} {formatClock(item.startedAt)}
+                  </Text>
+                  <Text style={[typography.body, styles.muted, { color: theme.colors.textMuted }]}>
+                    {formatDurationSeconds(item.durationSeconds)} · {item.chunkCount} chunk
+                    {item.chunkCount === 1 ? '' : 's'}
+                  </Text>
+                </View>
+                <Button
+                  title="View"
+                  variant="ghost"
+                  compact
+                  onPress={() =>
+                    rootNav.navigate('Main', {
+                      screen: 'Timeline',
+                      params: { dayOffset: dayOffsetFor(item.startedAt), sessionId: item.clientId },
+                    })
+                  }
+                />
+              </View>
+            </Card>
+          )}
+        />
+      )}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  subtitle: { marginTop: spacing.xs },
-  statusCard: { marginTop: spacing.lg },
-  startWrap: { marginTop: spacing.md },
-  section: { marginTop: spacing.lg, marginBottom: spacing.sm, textTransform: 'uppercase', letterSpacing: 0.6 },
-  ask: {
-    borderWidth: 1,
-    borderRadius: 12,
+  subtitle: {
+    marginBottom: spacing.md,
+  },
+  statusCard: {
+    marginTop: spacing.md,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  muted: {
+    marginTop: spacing.xs,
+  },
+  askInput: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radius.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: 12,
+    marginBottom: spacing.sm,
     fontSize: 16,
   },
-  list: { flex: 1, marginTop: spacing.xs },
-  syncLine: { textAlign: 'center', paddingVertical: spacing.sm },
+  sectionTitle: {
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  list: {
+    flex: 1,
+  },
+  sessionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  flex: {
+    flex: 1,
+  },
 });

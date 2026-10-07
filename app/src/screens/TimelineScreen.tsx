@@ -1,183 +1,304 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, StyleSheet, Text, View } from 'react-native';
-import { useRoute, type RouteProp } from '@react-navigation/native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+  type ListRenderItemInfo,
+} from 'react-native';
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import type { TabParamList, TimelineParams } from '../navigation/RootNavigator';
 import { api } from '../api/client';
 import type { Chunk, SessionSummary } from '../api/types';
-import { Card } from '../components/Card';
+import { dayBoundsIso, formatClock, formatDateHeader } from '../lib/time';
 import { ChunkStatusBadge } from '../components/ChunkStatusBadge';
 import { EmptyState } from '../components/EmptyState';
 import { Screen } from '../components/Screen';
-import { dayBoundsIso, formatClock, formatDateHeader, formatDurationSeconds } from '../lib/time';
-import type { MainTabParamList } from '../navigation/types';
-import { spacing, typography, useTheme } from '../theme';
+import { radius, spacing, typography, useTheme } from '../theme';
 
-type TimelineRouteProp = RouteProp<MainTabParamList, 'Timeline'>;
+type Props = BottomTabScreenProps<TabParamList, 'Timeline'>;
 
-export function TimelineScreen(): React.JSX.Element {
+type TimelineRow =
+  | { kind: 'session'; key: string; session: SessionSummary }
+  | { kind: 'chunk'; key: string; chunk: Chunk; session: SessionSummary | null };
+
+export default function TimelineScreen({ navigation, route }: Props): React.JSX.Element {
   const theme = useTheme();
-  const route = useRoute<TimelineRouteProp>();
-  const [offsetDays, setOffsetDays] = useState(0);
+  const listRef = useRef<FlatList<TimelineRow>>(null);
+
+  const [dayOffset, setDayOffset] = useState(route.params?.dayOffset ?? 0);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(
+    route.params?.sessionId ?? null,
+  );
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [chunks, setChunks] = useState<Chunk[]>([]);
-  const [highlightId, setHighlightId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const listRef = useRef<FlatList<Chunk>>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const highlightChunkId = route.params?.highlightChunkId;
+
+  useEffect(() => {
+    const params = route.params;
+    if (params?.dayOffset !== undefined && params.dayOffset !== dayOffset) {
+      setDayOffset(params.dayOffset);
+    }
+    if (params?.sessionId !== undefined) {
+      setSelectedClientId(params.sessionId);
+    }
+  }, [route.params]);
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true);
+    setError(null);
     try {
-      const { from, to } = dayBoundsIso(offsetDays);
-      const [sessionRes, chunkRes] = await Promise.all([
+      const { from, to } = dayBoundsIso(dayOffset);
+      const [sessionsResponse, chunksResponse] = await Promise.all([
         api.listSessions({ from, to }),
-        api.listChunks({
-          from,
-          to,
-          sessionId: selectedSessionId ?? undefined,
-          limit: 500,
-        }),
+        (async () => {
+          const params: { from: string; to: string; limit: number; offset: number; sessionId?: string } = {
+            from,
+            to,
+            limit: 200,
+            offset: 0,
+          };
+          if (selectedClientId) {
+            const sessionsNow = await api.listSessions({ from, to });
+            const match = sessionsNow.sessions.find(
+              (s) => s.clientId === selectedClientId || s.id === selectedClientId,
+            );
+            if (match) params.sessionId = match.id;
+          }
+          return api.listChunks(params);
+        })(),
       ]);
-      setSessions(sessionRes.sessions);
-      setChunks([...chunkRes.chunks].reverse());
-    } catch {
-      // Keep previous content on error.
+      const sortedSessions = [...sessionsResponse.sessions].sort((a, b) =>
+        a.startedAt.localeCompare(b.startedAt),
+      );
+      setSessions(sortedSessions);
+      setChunks(
+        [...chunksResponse.chunks].sort((a, b) => a.startedAt.localeCompare(b.startedAt)),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load the timeline.');
     } finally {
       setLoading(false);
     }
-  }, [offsetDays, selectedSessionId]);
+  }, [dayOffset, selectedClientId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  // Incoming deep links from chat citations / search / home. The ref guards
-  // against re-applying the same params on re-renders.
-  const handledParamKey = useRef<string | null>(null);
   useEffect(() => {
-    const params = route.params;
-    const key = params?.highlightChunkId ?? params?.sessionId ?? null;
-    if (key && handledParamKey.current !== key) {
-      handledParamKey.current = key;
-      setOffsetDays(0);
-      setSelectedSessionId(params?.sessionId ?? null);
-      setHighlightId(params?.highlightChunkId ?? null);
-    }
-  }, [route.params]);
+    const unsubscribe = navigation.addListener('focus', () => void load());
+    return unsubscribe;
+  }, [navigation, load]);
 
-  // Scroll to the highlighted chunk once data is loaded.
+  const rows = useMemo<TimelineRow[]>(() => {
+    const sessionById = new Map<string, SessionSummary>();
+    for (const session of sessions) {
+      sessionById.set(session.id, session);
+    }
+    const chunksBySession = new Map<string, Chunk[]>();
+    for (const chunk of chunks) {
+      const list = chunksBySession.get(chunk.sessionId) ?? [];
+      list.push(chunk);
+      chunksBySession.set(chunk.sessionId, list);
+    }
+    const orderedSessions =
+      selectedClientId !== null
+        ? sessions.filter(
+            (session) => session.clientId === selectedClientId || session.id === selectedClientId,
+          )
+        : sessions;
+    const result: TimelineRow[] = [];
+    for (const session of orderedSessions) {
+      const sessionChunks = chunksBySession.get(session.id) ?? [];
+      if (selectedClientId === null && sessionChunks.length === 0) continue;
+      result.push({ kind: 'session', key: `session-${session.id}`, session });
+      for (const chunk of sessionChunks) {
+        result.push({
+          kind: 'chunk',
+          key: `chunk-${chunk.id}`,
+          chunk,
+          session: sessionById.get(chunk.sessionId) ?? null,
+        });
+      }
+    }
+    return result;
+  }, [sessions, chunks, selectedClientId]);
+
+  const highlightIndex = useMemo(
+    () => rows.findIndex((row) => row.kind === 'chunk' && row.chunk.id === highlightChunkId),
+    [rows, highlightChunkId],
+  );
+
   useEffect(() => {
-    if (!highlightId || chunks.length === 0) return;
-    const index = chunks.findIndex((c) => c.id === highlightId);
-    if (index >= 0) {
-      const target = chunks[index];
-      if (target) setSelectedSessionId((prev) => prev ?? target.sessionId);
-      setTimeout(() => {
-        listRef.current?.scrollToIndex({ index, viewPosition: 0.4, animated: true });
+    if (highlightIndex >= 0 && !loading) {
+      const timer = setTimeout(() => {
+        listRef.current?.scrollToIndex({ index: highlightIndex, animated: true, viewPosition: 0.35 });
       }, 350);
+      return () => clearTimeout(timer);
     }
-  }, [highlightId, chunks]);
+  }, [highlightIndex, loading]);
 
-  function confirmDeleteSession(session: SessionSummary): void {
-    Alert.alert('Delete session?', 'The session and all its transcript chunks will be permanently deleted.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void api
-            .deleteSession(session.id)
-            .then(() => {
-              if (selectedSessionId === session.id) setSelectedSessionId(null);
-              return load();
-            })
-            .catch((err: unknown) => Alert.alert('Delete failed', err instanceof Error ? err.message : String(err)));
+  const deleteSession = (session: SessionSummary): void => {
+    Alert.alert(
+      'Delete session?',
+      `This removes the session from ${formatClock(session.startedAt)} and all of its memories. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            api
+              .deleteSession(session.id)
+              .then(() => {
+                if (selectedClientId === session.clientId) setSelectedClientId(null);
+                return load();
+              })
+              .catch((e: unknown) =>
+                Alert.alert('Delete failed', e instanceof Error ? e.message : 'Please try again.'),
+              );
+          },
         },
-      },
-    ]);
-  }
+      ],
+    );
+  };
 
-  function confirmDeleteChunk(chunk: Chunk): void {
-    Alert.alert('Delete this memory?', 'This transcript chunk will be permanently deleted.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void api
-            .deleteChunk(chunk.id)
-            .then(() => load())
-            .catch((err: unknown) => Alert.alert('Delete failed', err instanceof Error ? err.message : String(err)));
-        },
-      },
-    ]);
-  }
+  const renderItem = ({ item }: ListRenderItemInfo<TimelineRow>): React.JSX.Element => {
+    if (item.kind === 'session') {
+      const session = item.session;
+      return (
+        <View style={styles.sessionHeader}>
+          <Text style={[typography.label, styles.sessionTitle, { color: theme.colors.textMuted }]}>
+            Session · {formatClock(session.startedAt)}
+          </Text>
+          <Pressable onPress={() => deleteSession(session)} hitSlop={8}>
+            <Text style={[typography.label, { color: theme.colors.danger }]}>Delete</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    const chunk = item.chunk;
+    const highlighted = highlightChunkId !== undefined && chunk.id === highlightChunkId;
+    return (
+      <View
+        style={[
+          styles.chunkRow,
+          {
+            backgroundColor: highlighted ? theme.colors.surfaceMuted : theme.colors.surface,
+            borderColor: highlighted ? theme.colors.primary : theme.colors.border,
+          },
+        ]}
+      >
+        <Text style={[typography.label, styles.chunkTime, { color: theme.colors.primary }]}>
+          {formatClock(chunk.startedAt)}
+        </Text>
+        <Text style={[typography.body, { color: theme.colors.text }]}>
+          {chunk.text.length > 0 ? chunk.text : 'Transcription pending…'}
+        </Text>
+        <ChunkStatusBadge status={chunk.processingStatus} />
+      </View>
+    );
+  };
 
   return (
     <Screen>
-      <View style={styles.header}>
-        <Text style={[typography.heading, { color: theme.colors.text }]} onPress={() => setOffsetDays((d) => d + 1)}>
-          ‹
-        </Text>
-        <View style={styles.headerCenter}>
-          <Text style={[typography.heading, { color: theme.colors.text }]}>{formatDateHeader(offsetDays)}</Text>
-          {offsetDays !== 0 ? (
-            <Text style={[typography.caption, { color: theme.colors.primary }]} onPress={() => setOffsetDays(0)}>
-              Jump to today
-            </Text>
-          ) : null}
-        </View>
-        <Text
-          style={[typography.heading, { color: theme.colors.text, opacity: offsetDays === 0 ? 0.3 : 1 }]}
-          onPress={() => offsetDays < 0 && setOffsetDays((d) => d - 1)}
+      <View style={styles.dateBar}>
+        <Pressable onPress={() => setDayOffset(dayOffset + 1)} hitSlop={8} style={styles.arrow}>
+          <Text style={[typography.heading, { color: theme.colors.primary }]}>‹</Text>
+        </Pressable>
+        <Pressable onPress={() => setDayOffset(0)}>
+          <Text style={[typography.heading, { color: theme.colors.text }]}>
+            {formatDateHeader(dayOffset)}
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setDayOffset(Math.max(dayOffset - 1, 0))}
+          hitSlop={8}
+          style={styles.arrow}
+          disabled={dayOffset <= 0}
         >
-          ›
-        </Text>
+          <Text
+            style={[
+              typography.heading,
+              { color: dayOffset <= 0 ? theme.colors.border : theme.colors.primary },
+            ]}
+          >
+            ›
+          </Text>
+        </Pressable>
       </View>
 
-      <View style={styles.chips}>
-        <Chip label="All" active={selectedSessionId === null} onPress={() => setSelectedSessionId(null)} />
+      <View style={styles.chipsRow}>
+        <Chip
+          label="Today"
+          active={dayOffset === 0}
+          onPress={() => setDayOffset(0)}
+        />
+        <Chip
+          label="Yesterday"
+          active={dayOffset === 1}
+          onPress={() => setDayOffset(1)}
+        />
         {sessions.map((session) => (
           <Chip
             key={session.id}
-            label={`${formatClock(session.startedAt)} · ${formatDurationSeconds(session.durationSeconds ?? 0)}`}
-            active={selectedSessionId === session.id}
-            onPress={() => setSelectedSessionId((prev) => (prev === session.id ? null : session.id))}
-            onLongPress={() => confirmDeleteSession(session)}
+            label={formatClock(session.startedAt)}
+            active={selectedClientId === session.clientId || selectedClientId === session.id}
+            onPress={() =>
+              setSelectedClientId(
+                selectedClientId === session.clientId || selectedClientId === session.id
+                  ? null
+                  : session.clientId,
+              )
+            }
           />
         ))}
+        {selectedClientId !== null ? (
+          <Chip label="All sessions" active={false} onPress={() => setSelectedClientId(null)} />
+        ) : null}
       </View>
 
-      <FlatList
-        ref={listRef}
-        data={chunks}
-        keyExtractor={(item) => item.id}
-        style={styles.list}
-        onScrollToIndexFailed={({ index }) => {
-          setTimeout(() => listRef.current?.scrollToIndex({ index, viewPosition: 0.4 }), 300);
-        }}
-        ListEmptyComponent={
-          loading ? null : (
-            <EmptyState
-              title="No memories this day"
-              message={offsetDays === 0 ? 'Record something and it will appear here within a minute.' : undefined}
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={theme.colors.primary} />
+        </View>
+      ) : error !== null ? (
+        <EmptyState title="Could not load the timeline" message={`${error}\nPull down to retry.`} />
+      ) : rows.length === 0 ? (
+        <EmptyState
+          title="Nothing here yet"
+          message={dayOffset === 0 ? 'Record something and it will appear here.' : 'No memories were recorded on this day.'}
+        />
+      ) : (
+        <FlatList
+          ref={listRef}
+          data={rows}
+          keyExtractor={(row) => row.key}
+          renderItem={renderItem}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={loading}
+              onRefresh={() => void load()}
+              tintColor={theme.colors.primary}
             />
-          )
-        }
-        renderItem={({ item }) => {
-          const highlighted = item.id === highlightId;
-          return (
-            <Card
-              style={highlighted ? { borderColor: theme.colors.primary, borderWidth: 1.5 } : undefined}
-            >
-              <Text style={[typography.label, { color: theme.colors.primary }]}>{formatClock(item.startedAt)}</Text>
-              <Text style={[typography.body, { color: theme.colors.text }]} onLongPress={() => confirmDeleteChunk(item)}>
-                {item.text.length > 0 ? item.text : '—'}
-              </Text>
-              <ChunkStatusBadge status={item.processingStatus} />
-            </Card>
-          );
-        }}
-      />
+          }
+          onScrollToIndexFailed={({ index }) => {
+            setTimeout(
+              () =>
+                listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.35 }),
+              400,
+            );
+          }}
+        />
+      )}
     </Screen>
   );
 }
@@ -186,43 +307,81 @@ function Chip({
   label,
   active,
   onPress,
-  onLongPress,
 }: {
   label: string;
   active: boolean;
   onPress: () => void;
-  onLongPress?: () => void;
 }): React.JSX.Element {
   const theme = useTheme();
   return (
-    <Text
+    <Pressable
+      onPress={onPress}
       style={[
         styles.chip,
-        typography.label,
         {
-          color: active ? theme.colors.onPrimary : theme.colors.text,
-          backgroundColor: active ? theme.colors.primary : theme.colors.surface,
-          borderColor: theme.colors.border,
+          backgroundColor: active ? theme.colors.primary : theme.colors.surfaceMuted,
         },
       ]}
-      onPress={onPress}
-      onLongPress={onLongPress}
     >
-      {label}
-    </Text>
+      <Text
+        style={[
+          typography.label,
+          { color: active ? theme.colors.onPrimary : theme.colors.text },
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
-  headerCenter: { alignItems: 'center' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginBottom: spacing.sm },
+  dateBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+  },
+  arrow: {
+    paddingHorizontal: spacing.md,
+  },
+  chipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginVertical: spacing.md,
+  },
   chip: {
-    overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 999,
-    paddingHorizontal: spacing.sm,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
     paddingVertical: 6,
   },
-  list: { flex: 1 },
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  listContent: {
+    paddingBottom: spacing.xl,
+  },
+  sessionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  sessionTitle: {
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  chunkRow: {
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  chunkTime: {
+    marginBottom: spacing.xs,
+  },
 });

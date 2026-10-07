@@ -1,79 +1,150 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { Text } from 'react-native';
 import {
   DarkTheme,
   DefaultTheme,
   NavigationContainer,
+  type NavigatorScreenParams,
   type Theme as NavigationTheme,
 } from '@react-navigation/native';
-import { ChatScreen } from '../screens/ChatScreen';
-import { HomeScreen } from '../screens/HomeScreen';
-import { RecordingScreen } from '../screens/RecordingScreen';
-import { SearchScreen } from '../screens/SearchScreen';
-import { SettingsScreen } from '../screens/SettingsScreen';
-import { TimelineScreen } from '../screens/TimelineScreen';
-import { AuthScreen } from '../screens/AuthScreen';
-import { useTheme } from '../theme';
-import type { MainTabParamList, RootStackParamList } from './types';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import {
+  createNativeStackNavigator,
+  type NativeStackNavigationProp,
+} from '@react-navigation/native-stack';
+import { useAuthStore } from '../stores/auth';
+import { darkTheme, lightTheme, useTheme } from '../theme';
+import AuthScreen from '../screens/AuthScreen';
+import HomeScreen from '../screens/HomeScreen';
+import RecordingScreen from '../screens/RecordingScreen';
+import TimelineScreen from '../screens/TimelineScreen';
+import SearchScreen from '../screens/SearchScreen';
+import ChatScreen from '../screens/ChatScreen';
+import SettingsScreen from '../screens/SettingsScreen';
+import { Screen } from '../components/Screen';
+import { EmptyState } from '../components/EmptyState';
+
+export type TimelineParams = {
+  highlightChunkId?: string;
+  dayOffset?: number;
+  sessionId?: string;
+};
+
+export type ChatParams = {
+  initialMessage?: string;
+};
+
+export type TabParamList = {
+  Home: undefined;
+  Timeline: TimelineParams | undefined;
+  Search: undefined;
+  Chat: ChatParams | undefined;
+  Settings: undefined;
+};
+
+export type RootStackParamList = {
+  Auth: undefined;
+  Main: NavigatorScreenParams<TabParamList>;
+  Recording: undefined;
+};
+
+export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
-const Tabs = createBottomTabNavigator<MainTabParamList>();
+const Tab = createBottomTabNavigator<TabParamList>();
 
-function TabDot({ focused, color }: { focused: boolean; color: string }): React.JSX.Element {
-  return <View style={[styles.dot, { backgroundColor: color, opacity: focused ? 1 : 0.35 }]} />;
+function tabIcon(glyph: string) {
+  return function TabIcon({ color }: { color: string }): React.JSX.Element {
+    return <Text style={{ fontSize: 18, color }}>{glyph}</Text>;
+  };
+}
+
+function buildNavigationTheme(dark: boolean): NavigationTheme {
+  const base = dark ? DarkTheme : DefaultTheme;
+  const colors = dark ? darkTheme.colors : lightTheme.colors;
+  return {
+    ...base,
+    colors: {
+      ...base.colors,
+      primary: colors.primary,
+      background: colors.background,
+      card: colors.surface,
+      text: colors.text,
+      border: colors.border,
+    },
+  };
 }
 
 function MainTabs(): React.JSX.Element {
   const theme = useTheme();
   return (
-    <Tabs.Navigator
+    <Tab.Navigator
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: theme.colors.primary,
         tabBarInactiveTintColor: theme.colors.textMuted,
-        tabBarStyle: { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border },
+        tabBarStyle: {
+          backgroundColor: theme.colors.surface,
+          borderTopColor: theme.colors.border,
+        },
       }}
     >
-      <Tabs.Screen name="Home" component={HomeScreen} options={{ title: 'Home', tabBarIcon: TabDot }} />
-      <Tabs.Screen name="Timeline" component={TimelineScreen} options={{ title: 'Timeline', tabBarIcon: TabDot }} />
-      <Tabs.Screen name="Search" component={SearchScreen} options={{ title: 'Search', tabBarIcon: TabDot }} />
-      <Tabs.Screen name="Chat" component={ChatScreen} options={{ title: 'Chat', tabBarIcon: TabDot }} />
-      <Tabs.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings', tabBarIcon: TabDot }} />
-    </Tabs.Navigator>
+      <Tab.Screen
+        name="Home"
+        component={HomeScreen}
+        options={{ title: 'Home', tabBarIcon: tabIcon('🏠') }}
+      />
+      <Tab.Screen
+        name="Timeline"
+        component={TimelineScreen}
+        options={{ title: 'Timeline', tabBarIcon: tabIcon('🕘') }}
+      />
+      <Tab.Screen
+        name="Search"
+        component={SearchScreen}
+        options={{ title: 'Search', tabBarIcon: tabIcon('🔍') }}
+      />
+      <Tab.Screen
+        name="Chat"
+        component={ChatScreen}
+        options={{ title: 'Chat', tabBarIcon: tabIcon('💬') }}
+      />
+      <Tab.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{ title: 'Settings', tabBarIcon: tabIcon('⚙️') }}
+      />
+    </Tab.Navigator>
   );
 }
 
-export function RootNavigator(): React.JSX.Element {
+export default function RootNavigator(): React.JSX.Element {
   const theme = useTheme();
-  const navTheme: NavigationTheme = {
-    ...(theme.dark ? DarkTheme : DefaultTheme),
-    colors: {
-      ...(theme.dark ? DarkTheme.colors : DefaultTheme.colors),
-      primary: theme.colors.primary,
-      background: theme.colors.background,
-      card: theme.colors.surface,
-      text: theme.colors.text,
-      border: theme.colors.border,
-    },
-  };
+  const session = useAuthStore((state) => state.session);
+  const initialized = useAuthStore((state) => state.initialized);
 
   return (
-    <NavigationContainer theme={navTheme}>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Auth" component={AuthScreen} />
-        <Stack.Screen name="Main" component={MainTabs} />
-        <Stack.Screen
-          name="Recording"
-          component={RecordingScreen}
-          options={{ headerShown: true, title: 'Recording', headerBackVisible: false }}
-        />
-      </Stack.Navigator>
+    <NavigationContainer theme={buildNavigationTheme(theme.dark)}>
+      {!initialized ? (
+        <Screen>
+          <EmptyState title="AI Memory" message="Loading your session…" />
+        </Screen>
+      ) : (
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          {session === null ? (
+            <Stack.Screen name="Auth" component={AuthScreen} />
+          ) : (
+            <>
+              <Stack.Screen name="Main" component={MainTabs} />
+              <Stack.Screen
+                name="Recording"
+                component={RecordingScreen}
+                options={{ animation: 'slide_from_bottom' }}
+              />
+            </>
+          )}
+        </Stack.Navigator>
+      )}
     </NavigationContainer>
   );
 }
-
-const styles = StyleSheet.create({
-  dot: { width: 6, height: 6, borderRadius: 3, marginTop: 4 },
-});

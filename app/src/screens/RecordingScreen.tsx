@@ -1,89 +1,137 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../navigation/RootNavigator';
+import { recorder } from '../lib/recorder';
+import { stopRemoteSession } from '../lib/sync';
+import { useRecordingStore } from '../stores/recording';
+import { useSyncStore, selectSyncStatus } from '../stores/sync';
+import { formatDurationMs } from '../lib/time';
 import { Button } from '../components/Button';
+import { Card } from '../components/Card';
 import { RecordingDot } from '../components/RecordingDot';
 import { Screen } from '../components/Screen';
-import { endRecording } from '../lib/recordingSession';
-import { formatDurationMs } from '../lib/time';
-import type { RootStackParamList } from '../navigation/types';
-import { useRecordingStore } from '../stores/recording';
-import { selectSyncStatus, useSyncStore } from '../stores/sync';
 import { spacing, typography, useTheme } from '../theme';
 
-export function RecordingScreen(): React.JSX.Element {
+type Props = NativeStackScreenProps<RootStackParamList, 'Recording'>;
+
+export default function RecordingScreen({ navigation }: Props): React.JSX.Element {
   const theme = useTheme();
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { active, startedAt, chunkCount, error } = useRecordingStore();
+  const recording = useRecordingStore();
   const syncStatus = useSyncStore(selectSyncStatus);
-  const [nowMs, setNowMs] = useState(Date.now());
+  const [elapsedMs, setElapsedMs] = useState(0);
   const [stopping, setStopping] = useState(false);
 
+  const startedAtMs = recording.startedAt ? new Date(recording.startedAt).getTime() : null;
+
   useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+    if (startedAtMs === null) return;
+    const tick = () => setElapsedMs(Date.now() - startedAtMs);
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [startedAtMs]);
 
-  const startedAtMs = startedAt ? Date.parse(startedAt) : nowMs;
-  const elapsed = formatDurationMs(Math.max(0, nowMs - startedAtMs));
-
-  async function handleStop(): Promise<void> {
+  const stop = async (): Promise<void> => {
     setStopping(true);
     try {
-      await endRecording();
+      await recorder.stop();
+      const { sessionLocalId } = useRecordingStore.getState();
+      if (sessionLocalId) {
+        stopRemoteSession(sessionLocalId, new Date().toISOString());
+      }
+      useRecordingStore.getState().reset();
       navigation.goBack();
     } finally {
       setStopping(false);
     }
-  }
+  };
 
   return (
-    <Screen style={styles.screen}>
+    <Screen>
       <View style={styles.center}>
-        <RecordingDot />
-        <Text style={[styles.timer, typography.title, { color: theme.colors.text }]}>{elapsed}</Text>
-        <Text style={[typography.body, { color: theme.colors.textMuted }]}>
-          {active ? 'Recording in progress' : 'Finishing…'}
+        <View style={styles.indicatorRow}>
+          <RecordingDot size={14} />
+          <Text style={[typography.heading, { color: theme.colors.text }]}>
+            Microphone active
+          </Text>
+        </View>
+
+        <Text style={[styles.timer, { color: theme.colors.text }]}>
+          {formatDurationMs(elapsedMs)}
         </Text>
+
+        <Card style={styles.countsCard}>
+          <Text style={[typography.body, { color: theme.colors.text }]}>
+            {recording.chunkCount} chunk{recording.chunkCount === 1 ? '' : 's'} captured
+          </Text>
+          <Text style={[typography.body, styles.countLine, { color: theme.colors.textMuted }]}>
+            {syncStatus.pending} waiting to upload · {syncStatus.uploading ? 1 : 0} uploading
+            {syncStatus.failed > 0 ? ` · ${syncStatus.failed} failed` : ''}
+          </Text>
+          {recording.error ? (
+            <Text style={[typography.label, styles.errorLine, { color: theme.colors.danger }]}>
+              {recording.error}
+            </Text>
+          ) : null}
+        </Card>
+
+        <Text
+          style={[typography.body, styles.hint, { color: theme.colors.textMuted }]}
+        >
+          Recording continues in the background while you use other apps. On iOS this uses the
+          audio background mode; keep the app open for best results.
+        </Text>
+
+        <View style={styles.stopWrap}>
+          <Button
+            title="Stop"
+            variant="danger"
+            onPress={() => void stop()}
+            loading={stopping}
+          />
+        </View>
       </View>
-
-      <View style={styles.stats}>
-        <Stat label="Chunks captured" value={String(chunkCount)} />
-        <Stat label="Waiting to upload" value={String(syncStatus.pending)} />
-        <Stat label="Failed" value={String(syncStatus.failed)} highlight={syncStatus.failed > 0} />
-      </View>
-
-      {error ? (
-        <Text style={[typography.label, styles.error, { color: theme.colors.danger }]}>{error}</Text>
-      ) : null}
-
-      <Text style={[typography.caption, styles.note, { color: theme.colors.textMuted }]}>
-        Recording continues while the app is in the background or your screen is locked. Nothing is
-        recorded unless you start it yourself.
-      </Text>
-
-      <Button title="Stop Recording" variant="danger" onPress={() => void handleStop()} loading={stopping} />
     </Screen>
   );
 }
 
-function Stat({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }): React.JSX.Element {
-  const theme = useTheme();
-  return (
-    <View style={styles.stat}>
-      <Text style={[typography.heading, { color: highlight ? theme.colors.danger : theme.colors.text }]}>{value}</Text>
-      <Text style={[typography.caption, { color: theme.colors.textMuted, textAlign: 'center' }]}>{label}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  screen: { paddingBottom: spacing.lg },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
-  timer: { fontSize: 56, fontVariant: ['tabular-nums'] },
-  stats: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: spacing.lg },
-  stat: { alignItems: 'center', gap: 2 },
-  error: { textAlign: 'center', marginBottom: spacing.sm },
-  note: { textAlign: 'center', marginBottom: spacing.lg, paddingHorizontal: spacing.sm },
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  indicatorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  timer: {
+    fontSize: 56,
+    fontWeight: '700',
+    marginTop: spacing.md,
+    fontVariant: ['tabular-nums'],
+  },
+  countsCard: {
+    alignSelf: 'stretch',
+    marginTop: spacing.lg,
+    alignItems: 'center',
+  },
+  countLine: {
+    marginTop: spacing.xs,
+  },
+  errorLine: {
+    marginTop: spacing.sm,
+    textAlign: 'center',
+  },
+  hint: {
+    textAlign: 'center',
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.md,
+  },
+  stopWrap: {
+    alignSelf: 'stretch',
+    marginTop: spacing.xl,
+  },
 });
