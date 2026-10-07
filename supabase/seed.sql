@@ -1,0 +1,4 @@
+-- seed.sql -- AI Memory App
+-- No seed data is required: every table is user-owned and populated by the
+-- mobile app / backend at runtime. Add local-dev fixtures below if needed,
+-- e.g. a test user row in auth.users and matching rows in the public tables.

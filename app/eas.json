@@ -1,0 +1,27 @@
+{
+  "cli": {
+    "version": ">= 13.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://nwxjcudfggqbarqhunmg.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_jemBu9p9outeLvRBFltWMg_cID48U63",
+        "EXPO_PUBLIC_API_URL": "http://192.168.15.253:8787"
+      }
+    },
+    "production": {
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://nwxjcudfggqbarqhunmg.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_jemBu9p9outeLvRBFltWMg_cID48U63",
+        "EXPO_PUBLIC_API_URL": "http://192.168.15.253:8787"
+      }
+    }
+  }
+}

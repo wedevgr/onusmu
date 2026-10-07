@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "AI Memory",
+    "slug": "ai-memory",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "aimemory",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.aimemory.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "AI Memory records audio only while you have started a recording.",
+        "UIBackgroundModes": [
+          "audio"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.aimemory.app",
+      "permissions": [
+        "RECORD_AUDIO",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_MICROPHONE",
+        "WAKE_LOCK",
+        "POST_NOTIFICATIONS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": "AI Memory records audio only while you have started a recording."
+        }
+      ],
+      "expo-asset",
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "4a1ec579-8ed2-4b78-adc5-d3ecd052fa00"
+      }
+    },
+    "owner": "alekosskou"
+  }
+}
