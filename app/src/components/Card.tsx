@@ -9,23 +9,12 @@ interface CardProps {
 
 export function Card({ children, style }: CardProps): React.JSX.Element {
   const theme = useTheme();
-  return (
-    <View
-      style={[
-        styles.card,
-        { backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
-        style,
-      ]}
-    >
-      {children}
-    </View>
-  );
+  return <View style={[styles.card, theme.glass, style]}>{children}</View>;
 }
 
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
     padding: spacing.md,
     marginVertical: spacing.xs,
   },

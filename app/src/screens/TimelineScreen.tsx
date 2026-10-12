@@ -5,6 +5,7 @@ import {
   FlatList,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -14,10 +15,12 @@ import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { TabParamList, TimelineParams } from '../navigation/RootNavigator';
 import { api } from '../api/client';
 import type { Chunk, SessionSummary } from '../api/types';
-import { dayBoundsIso, formatClock, formatDateHeader } from '../lib/time';
+import { dayBoundsIso, formatClock, formatDateHeader, formatDurationHuman } from '../lib/time';
 import { ChunkStatusBadge } from '../components/ChunkStatusBadge';
 import { EmptyState } from '../components/EmptyState';
-import { Screen } from '../components/Screen';
+import { Header } from '../components/Header';
+import { Icon, IconButton } from '../components/Icon';
+import { Screen, SCREEN_GUTTER } from '../components/Screen';
 import { radius, spacing, typography, useTheme } from '../theme';
 
 type Props = BottomTabScreenProps<TabParamList, 'Timeline'>;
@@ -30,7 +33,7 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
   const theme = useTheme();
   const listRef = useRef<FlatList<TimelineRow>>(null);
 
-  const [dayOffset, setDayOffset] = useState(route.params?.dayOffset ?? 0);
+  const [dayOffset, setDayOffset] = useState(Math.max(route.params?.dayOffset ?? 0, 0));
   const [selectedClientId, setSelectedClientId] = useState<string | null>(
     route.params?.sessionId ?? null,
   );
@@ -43,7 +46,7 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
   useEffect(() => {
     const params = route.params;
     if (params?.dayOffset !== undefined && params.dayOffset !== dayOffset) {
-      setDayOffset(params.dayOffset);
+      setDayOffset(Math.max(params.dayOffset, 0));
     }
     if (params?.sessionId !== undefined) {
       setSelectedClientId(params.sessionId);
@@ -54,7 +57,8 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
     setLoading(true);
     setError(null);
     try {
-      const { from, to } = dayBoundsIso(dayOffset);
+      // dayOffset counts days back from today; the time helpers count forward.
+      const { from, to } = dayBoundsIso(-dayOffset);
       const [sessionsResponse, chunksResponse] = await Promise.all([
         api.listSessions({ from, to }),
         (async () => {
@@ -82,7 +86,7 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
         [...chunksResponse.chunks].sort((a, b) => a.startedAt.localeCompare(b.startedAt)),
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load the timeline.');
+      setError(e instanceof Error ? e.message : 'Δεν φορτώθηκε το χρονολόγιο.');
     } finally {
       setLoading(false);
     }
@@ -147,12 +151,12 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
 
   const deleteSession = (session: SessionSummary): void => {
     Alert.alert(
-      'Delete session?',
-      `This removes the session from ${formatClock(session.startedAt)} and all of its memories. This cannot be undone.`,
+      'Διαγραφή καταγραφής;',
+      `Η καταγραφή των ${formatClock(session.startedAt)} και όλες οι μνήμες της θα διαγραφούν οριστικά.`,
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: 'Άκυρο', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Διαγραφή',
           style: 'destructive',
           onPress: () => {
             api
@@ -162,7 +166,7 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
                 return load();
               })
               .catch((e: unknown) =>
-                Alert.alert('Delete failed', e instanceof Error ? e.message : 'Please try again.'),
+                Alert.alert('Η διαγραφή απέτυχε', e instanceof Error ? e.message : 'Δοκίμασε ξανά.'),
               );
           },
         },
@@ -175,32 +179,47 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
       const session = item.session;
       return (
         <View style={styles.sessionHeader}>
-          <Text style={[typography.label, styles.sessionTitle, { color: theme.colors.textMuted }]}>
-            Session · {formatClock(session.startedAt)}
-          </Text>
-          <Pressable onPress={() => deleteSession(session)} hitSlop={8}>
-            <Text style={[typography.label, { color: theme.colors.danger }]}>Delete</Text>
-          </Pressable>
+          <View style={[styles.sessionIcon, theme.glass]}>
+            <Icon name="mic" size={18} color={theme.colors.text} />
+          </View>
+          <View style={styles.flex}>
+            <Text style={[typography.heading, { color: theme.colors.text }]}>
+              {formatClock(session.startedAt)}
+            </Text>
+            <Text style={[typography.caption, { color: theme.colors.textMuted }]}>
+              Διάρκεια {formatDurationHuman(session.durationSeconds)}
+            </Text>
+          </View>
+          <IconButton
+            name="trash-2"
+            label="Διαγραφή καταγραφής"
+            filled={false}
+            color={theme.colors.textMuted}
+            onPress={() => deleteSession(session)}
+          />
         </View>
       );
     }
     const chunk = item.chunk;
     const highlighted = highlightChunkId !== undefined && chunk.id === highlightChunkId;
+    const pending = chunk.text.length === 0;
     return (
       <View
         style={[
-          styles.chunkRow,
-          {
-            backgroundColor: highlighted ? theme.colors.surfaceMuted : theme.colors.surface,
-            borderColor: highlighted ? theme.colors.primary : theme.colors.border,
-          },
+          styles.chunk,
+          highlighted && theme.glass,
         ]}
       >
-        <Text style={[typography.label, styles.chunkTime, { color: theme.colors.primary }]}>
+        <Text style={[typography.caption, styles.chunkTime, { color: theme.colors.textFaint }]}>
           {formatClock(chunk.startedAt)}
         </Text>
-        <Text style={[typography.body, { color: theme.colors.text }]}>
-          {chunk.text.length > 0 ? chunk.text : 'Transcription pending…'}
+        <Text
+          style={[
+            typography.body,
+            { color: pending ? theme.colors.textFaint : theme.colors.text },
+          ]}
+        >
+          {pending ? 'Αναμονή μεταγραφής' : chunk.text}
         </Text>
         <ChunkStatusBadge status={chunk.processingStatus} />
       </View>
@@ -208,41 +227,43 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
   };
 
   return (
-    <Screen>
-      <View style={styles.dateBar}>
-        <Pressable onPress={() => setDayOffset(dayOffset + 1)} hitSlop={8} style={styles.arrow}>
-          <Text style={[typography.heading, { color: theme.colors.primary }]}>‹</Text>
-        </Pressable>
-        <Pressable onPress={() => setDayOffset(0)}>
-          <Text style={[typography.heading, { color: theme.colors.text }]}>
-            {formatDateHeader(dayOffset)}
+    <Screen bottomInset={false}>
+      <Header title="Χρονολόγιο" />
+
+      <View style={[styles.dateBar, theme.glass]}>
+        <IconButton
+          name="chevron-left"
+          label="Προηγούμενη μέρα"
+          filled={false}
+          onPress={() => setDayOffset(dayOffset + 1)}
+        />
+        <Pressable onPress={() => setDayOffset(0)} style={styles.dateTitle}>
+          <Text style={[typography.label, styles.dateText, { color: theme.colors.text }]}>
+            {formatDateHeader(-dayOffset)}
           </Text>
         </Pressable>
-        <Pressable
-          onPress={() => setDayOffset(Math.max(dayOffset - 1, 0))}
-          hitSlop={8}
-          style={styles.arrow}
+        <IconButton
+          name="chevron-right"
+          label="Επόμενη μέρα"
+          filled={false}
           disabled={dayOffset <= 0}
-        >
-          <Text
-            style={[
-              typography.heading,
-              { color: dayOffset <= 0 ? theme.colors.border : theme.colors.primary },
-            ]}
-          >
-            ›
-          </Text>
-        </Pressable>
+          onPress={() => setDayOffset(Math.max(dayOffset - 1, 0))}
+        />
       </View>
 
-      <View style={styles.chipsRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipsScroll}
+        contentContainerStyle={styles.chipsRow}
+      >
         <Chip
-          label="Today"
+          label="Σήμερα"
           active={dayOffset === 0}
           onPress={() => setDayOffset(0)}
         />
         <Chip
-          label="Yesterday"
+          label="Χθες"
           active={dayOffset === 1}
           onPress={() => setDayOffset(1)}
         />
@@ -261,20 +282,27 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
           />
         ))}
         {selectedClientId !== null ? (
-          <Chip label="All sessions" active={false} onPress={() => setSelectedClientId(null)} />
+          <Chip label="Όλες" active={false} onPress={() => setSelectedClientId(null)} />
         ) : null}
-      </View>
+      </ScrollView>
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator color={theme.colors.primary} />
+          <ActivityIndicator color={theme.colors.textMuted} />
         </View>
       ) : error !== null ? (
-        <EmptyState title="Could not load the timeline" message={`${error}\nPull down to retry.`} />
+        <EmptyState
+          icon="cloud-off"
+          title="Δεν φορτώθηκε το χρονολόγιο"
+          message={error}
+          actionLabel="Δοκίμασε ξανά"
+          onAction={() => void load()}
+        />
       ) : rows.length === 0 ? (
         <EmptyState
-          title="Nothing here yet"
-          message={dayOffset === 0 ? 'Record something and it will appear here.' : 'No memories were recorded on this day.'}
+          icon="calendar"
+          title="Τίποτα ακόμα"
+          message={dayOffset === 0 ? 'Κατάγραψε κάτι και θα εμφανιστεί εδώ.' : 'Δεν υπάρχουν μνήμες για αυτή τη μέρα.'}
         />
       ) : (
         <FlatList
@@ -283,11 +311,12 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
           keyExtractor={(row) => row.key}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
               refreshing={loading}
               onRefresh={() => void load()}
-              tintColor={theme.colors.primary}
+              tintColor={theme.colors.textMuted}
             />
           }
           onScrollToIndexFailed={({ index }) => {
@@ -316,16 +345,19 @@ function Chip({
   return (
     <Pressable
       onPress={onPress}
-      style={[
+      style={({ pressed }) => [
         styles.chip,
         {
-          backgroundColor: active ? theme.colors.primary : theme.colors.surfaceMuted,
+          backgroundColor: active ? theme.colors.primary : 'transparent',
+          borderColor: active ? theme.colors.primary : theme.colors.border,
+          opacity: pressed ? 0.6 : 1,
         },
       ]}
     >
       <Text
         style={[
-          typography.label,
+          typography.caption,
+          styles.chipLabel,
           { color: active ? theme.colors.onPrimary : theme.colors.text },
         ]}
       >
@@ -335,26 +367,53 @@ function Chip({
   );
 }
 
+const CHUNK_INSET = 12;
+
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
   dateBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: spacing.sm,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.xs,
+    height: 48,
   },
-  arrow: {
-    paddingHorizontal: spacing.md,
+  dateTitle: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'stretch',
+  },
+  dateText: {
+    fontWeight: '600',
+  },
+  chipsScroll: {
+    // A ScrollView shrinks by default, which let the list below squash the pills.
+    flexGrow: 0,
+    flexShrink: 0,
+    height: 42,
+    marginTop: 12,
+    marginBottom: spacing.xs,
+    marginHorizontal: -SCREEN_GUTTER,
   },
   chipsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-    marginVertical: spacing.md,
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: SCREEN_GUTTER,
   },
   chip: {
     borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    height: 34,
+    flexShrink: 0,
+    justifyContent: 'center',
+  },
+  chipLabel: {
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
   },
   center: {
     flex: 1,
@@ -366,22 +425,26 @@ const styles = StyleSheet.create({
   },
   sessionHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 12,
     marginTop: spacing.md,
     marginBottom: spacing.xs,
   },
-  sessionTitle: {
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+  sessionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  chunkRow: {
+  chunk: {
     borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
+    paddingHorizontal: CHUNK_INSET,
+    paddingVertical: 10,
+    marginHorizontal: -CHUNK_INSET,
   },
   chunkTime: {
-    marginBottom: spacing.xs,
+    fontVariant: ['tabular-nums'],
+    marginBottom: 2,
   },
 });

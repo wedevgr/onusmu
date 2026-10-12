@@ -1,17 +1,23 @@
 import { AUDIO_BUCKET } from '../config';
 import { supabaseService } from '../supabase';
+import { ctx, decryptBuffer, encryptBuffer } from './crypto';
 
+/** Audio is encrypted before it leaves the server, so the bucket only ever holds ciphertext. */
 export async function uploadAudio(path: string, buffer: Buffer): Promise<void> {
   const { error } = await supabaseService.storage
     .from(AUDIO_BUCKET)
-    .upload(path, buffer, { contentType: 'audio/m4a', upsert: true });
+    .upload(path, encryptBuffer(buffer, ctx.audio(path)), { contentType: 'application/octet-stream', upsert: true });
   if (error) throw new Error(`Storage upload failed: ${error.message}`);
 }
 
-export async function downloadAudio(path: string): Promise<Buffer> {
+export async function downloadRawAudio(path: string): Promise<Buffer> {
   const { data, error } = await supabaseService.storage.from(AUDIO_BUCKET).download(path);
   if (error || !data) throw new Error(`Storage download failed: ${error?.message ?? 'empty'}`);
   return Buffer.from(await data.arrayBuffer());
+}
+
+export async function downloadAudio(path: string): Promise<Buffer> {
+  return decryptBuffer(await downloadRawAudio(path), ctx.audio(path));
 }
 
 export async function removeAudio(path: string): Promise<void> {
@@ -30,12 +36,4 @@ export async function removeUserAudioPrefix(userId: string): Promise<void> {
   if (paths.length > 0) {
     await supabaseService.storage.from(AUDIO_BUCKET).remove(paths);
   }
-}
-
-export async function signedAudioUrl(path: string, expiresSeconds = 3600): Promise<string | null> {
-  const { data, error } = await supabaseService.storage
-    .from(AUDIO_BUCKET)
-    .createSignedUrl(path, expiresSeconds);
-  if (error || !data?.signedUrl) return null;
-  return data.signedUrl;
 }

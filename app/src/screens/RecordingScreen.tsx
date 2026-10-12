@@ -1,24 +1,24 @@
-import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { recorder } from '../lib/recorder';
 import { stopRemoteSession } from '../lib/sync';
 import { useRecordingStore } from '../stores/recording';
 import { useSyncStore, selectSyncStatus } from '../stores/sync';
-import { formatDurationMs } from '../lib/time';
-import { Button } from '../components/Button';
-import { Card } from '../components/Card';
+import { useShallow } from 'zustand/react/shallow';
+import { formatClock, formatDurationMs } from '../lib/time';
+import { Icon, IconButton } from '../components/Icon';
 import { RecordingDot } from '../components/RecordingDot';
 import { Screen } from '../components/Screen';
-import { spacing, typography, useTheme } from '../theme';
+import { radius, spacing, typography, useTheme } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Recording'>;
 
 export default function RecordingScreen({ navigation }: Props): React.JSX.Element {
   const theme = useTheme();
   const recording = useRecordingStore();
-  const syncStatus = useSyncStore(selectSyncStatus);
+  const syncStatus = useSyncStore(useShallow(selectSyncStatus));
   const [elapsedMs, setElapsedMs] = useState(0);
   const [stopping, setStopping] = useState(false);
 
@@ -32,7 +32,16 @@ export default function RecordingScreen({ navigation }: Props): React.JSX.Elemen
     return () => clearInterval(interval);
   }, [startedAtMs]);
 
+  // The recorder stops itself when the plan's allowance runs out; leave the screen with it.
+  const leaving = useRef(false);
+  useEffect(() => {
+    if (recording.active || leaving.current) return;
+    leaving.current = true;
+    navigation.goBack();
+  }, [recording.active, navigation]);
+
   const stop = async (): Promise<void> => {
+    leaving.current = true;
     setStopping(true);
     try {
       await recorder.stop();
@@ -40,6 +49,7 @@ export default function RecordingScreen({ navigation }: Props): React.JSX.Elemen
       if (sessionLocalId) {
         stopRemoteSession(sessionLocalId, new Date().toISOString());
       }
+      useRecordingStore.getState().markStopped();
       useRecordingStore.getState().reset();
       navigation.goBack();
     } finally {
@@ -47,91 +57,188 @@ export default function RecordingScreen({ navigation }: Props): React.JSX.Elemen
     }
   };
 
+  const stats: { label: string; value: number; alert?: boolean }[] = [
+    { label: 'Τμήματα', value: recording.chunkCount },
+    { label: 'Σε αναμονή', value: syncStatus.pending },
+    { label: 'Ανέβασμα', value: syncStatus.uploading ? 1 : 0 },
+  ];
+  if (syncStatus.failed > 0) {
+    stats.push({ label: 'Απέτυχαν', value: syncStatus.failed, alert: true });
+  }
+
   return (
     <Screen>
-      <View style={styles.center}>
-        <View style={styles.indicatorRow}>
-          <RecordingDot size={14} />
-          <Text style={[typography.heading, { color: theme.colors.text }]}>
-            Microphone active
+      <View style={styles.topBar}>
+        <IconButton
+          name="chevron-down"
+          label="Απόκρυψη, η καταγραφή συνεχίζεται"
+          onPress={() => navigation.goBack()}
+        />
+        <View style={[styles.live, theme.glass]}>
+          <RecordingDot size={6} />
+          <Text style={[typography.caption, styles.liveLabel, { color: theme.colors.text }]}>
+            Μικρόφωνο ενεργό
           </Text>
         </View>
+        <View style={styles.topSpacer} />
+      </View>
 
-        <Text style={[styles.timer, { color: theme.colors.text }]}>
+      <View style={styles.center}>
+        <Text
+          style={[styles.timer, { color: theme.colors.text }]}
+          adjustsFontSizeToFit
+          numberOfLines={1}
+        >
           {formatDurationMs(elapsedMs)}
         </Text>
-
-        <Card style={styles.countsCard}>
-          <Text style={[typography.body, { color: theme.colors.text }]}>
-            {recording.chunkCount} chunk{recording.chunkCount === 1 ? '' : 's'} captured
+        {recording.startedAt ? (
+          <Text style={[typography.label, styles.started, { color: theme.colors.textMuted }]}>
+            Ξεκίνησε στις {formatClock(recording.startedAt)}
           </Text>
-          <Text style={[typography.body, styles.countLine, { color: theme.colors.textMuted }]}>
-            {syncStatus.pending} waiting to upload · {syncStatus.uploading ? 1 : 0} uploading
-            {syncStatus.failed > 0 ? ` · ${syncStatus.failed} failed` : ''}
-          </Text>
-          {recording.error ? (
-            <Text style={[typography.label, styles.errorLine, { color: theme.colors.danger }]}>
-              {recording.error}
-            </Text>
-          ) : null}
-        </Card>
+        ) : null}
 
-        <Text
-          style={[typography.body, styles.hint, { color: theme.colors.textMuted }]}
-        >
-          Recording continues in the background while you use other apps. On iOS this uses the
-          audio background mode; keep the app open for best results.
-        </Text>
-
-        <View style={styles.stopWrap}>
-          <Button
-            title="Stop"
-            variant="danger"
-            onPress={() => void stop()}
-            loading={stopping}
-          />
+        <View style={[styles.stats, theme.glass]}>
+          {stats.map((stat) => (
+            <View key={stat.label} style={styles.stat}>
+              <Text
+                style={[
+                  styles.statValue,
+                  { color: stat.alert ? theme.colors.danger : theme.colors.text },
+                ]}
+              >
+                {stat.value}
+              </Text>
+              <Text
+                style={[
+                  typography.caption,
+                  { color: stat.alert ? theme.colors.danger : theme.colors.textMuted },
+                ]}
+              >
+                {stat.label}
+              </Text>
+            </View>
+          ))}
         </View>
+
+        {recording.error ? (
+          <Text style={[typography.label, styles.errorLine, { color: theme.colors.danger }]}>
+            {recording.error}
+          </Text>
+        ) : null}
+      </View>
+
+      <View style={styles.footer}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Διακοπή καταγραφής"
+          onPress={() => void stop()}
+          disabled={stopping}
+          style={({ pressed }) => [
+            styles.stopButton,
+            { backgroundColor: theme.colors.recording, opacity: pressed ? 0.8 : 1 },
+          ]}
+        >
+          {stopping ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <View style={styles.stopSquare} />
+          )}
+        </Pressable>
+        <Text style={[typography.heading, styles.stopLabel, { color: theme.colors.text }]}>
+          {stopping ? 'Αποθήκευση' : 'Διακοπή και αποθήκευση'}
+        </Text>
+        <Text style={[typography.caption, styles.hint, { color: theme.colors.textMuted }]}>
+          Η καταγραφή συνεχίζεται στο παρασκήνιο όσο χρησιμοποιείς άλλες εφαρμογές. Στο iOS, κράτα
+          την εφαρμογή ανοιχτή για καλύτερα αποτελέσματα.
+        </Text>
       </View>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 48,
+  },
+  topSpacer: {
+    width: 40,
+  },
+  live: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radius.pill,
+    paddingLeft: 6,
+    paddingRight: 14,
+    height: 34,
+  },
+  liveLabel: {
+    fontWeight: '500',
+  },
   center: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  indicatorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
   timer: {
-    fontSize: 56,
+    fontSize: 64,
+    lineHeight: 76,
     fontWeight: '700',
-    marginTop: spacing.md,
+    letterSpacing: -2,
+    fontVariant: ['tabular-nums'],
+    alignSelf: 'stretch',
+    textAlign: 'center',
+  },
+  started: {
+    fontWeight: '400',
+  },
+  stats: {
+    flexDirection: 'row',
+    alignSelf: 'stretch',
+    borderRadius: radius.lg,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.xl,
+  },
+  stat: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+  },
+  statValue: {
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  countsCard: {
-    alignSelf: 'stretch',
-    marginTop: spacing.lg,
-    alignItems: 'center',
-  },
-  countLine: {
-    marginTop: spacing.xs,
-  },
   errorLine: {
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
     textAlign: 'center',
+  },
+  footer: {
+    alignItems: 'center',
+    paddingBottom: spacing.lg,
+  },
+  stopButton: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stopSquare: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    backgroundColor: '#FFFFFF',
+  },
+  stopLabel: {
+    marginTop: spacing.md,
   },
   hint: {
     textAlign: 'center',
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.md,
-  },
-  stopWrap: {
-    alignSelf: 'stretch',
-    marginTop: spacing.xl,
+    marginTop: 6,
+    maxWidth: 300,
   },
 });

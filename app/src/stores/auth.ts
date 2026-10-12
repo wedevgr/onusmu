@@ -1,6 +1,7 @@
 import type { Session, User } from '@supabase/supabase-js';
 import { create } from 'zustand';
 import { supabase } from '../supabase';
+import { useBillingStore } from './billing';
 
 interface AuthState {
   user: User | null;
@@ -25,6 +26,8 @@ export function bootstrapAuth(): () => void {
 
   const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
     useAuthStore.setState({ session, user: session?.user ?? null });
+    // Plan and usage belong to the account that just signed out.
+    if (!session) useBillingStore.getState().clear();
   });
 
   return () => subscription.subscription.unsubscribe();

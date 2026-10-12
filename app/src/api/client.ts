@@ -1,9 +1,9 @@
 import { config } from '../config';
 import { supabase } from '../supabase';
 import type {
+  BillingResponse,
   ChatRequest,
   ChatResponse,
-  ChunkAudioResponse,
   Conversation,
   ConversationsResponse,
   CreateSessionRequest,
@@ -16,6 +16,7 @@ import type {
   SearchParams,
   SearchResponse,
   SettingsResponse,
+  SuggestionsResponse,
   StopSessionRequest,
   StopSessionResponse,
   UploadChunkRequest,
@@ -61,7 +62,7 @@ function extractErrorMessage(data: unknown): string | null {
 async function request<T>(path: string, options: RequestOptions, retried = false): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
-    throw new ApiError('You are signed out.', 401);
+    throw new ApiError('Έχεις αποσυνδεθεί.', 401);
   }
 
   const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
@@ -77,14 +78,14 @@ async function request<T>(path: string, options: RequestOptions, retried = false
   try {
     response = await fetch(`${config.apiUrl}${path}`, { method: options.method, headers, body });
   } catch {
-    throw new ApiError('Network error. Check your connection.', 0);
+    throw new ApiError('Σφάλμα δικτύου. Έλεγξε τη σύνδεσή σου.', 0);
   }
 
   if (response.status === 401 && !retried) {
     const refreshed = await refreshAccessToken();
     if (!refreshed) {
       await supabase.auth.signOut();
-      throw new ApiError('Your session expired. Please sign in again.', 401);
+      throw new ApiError('Η σύνδεσή σου έληξε. Συνδέσου ξανά.', 401);
     }
     return request<T>(path, options, true);
   }
@@ -100,7 +101,7 @@ async function request<T>(path: string, options: RequestOptions, retried = false
   }
 
   if (!response.ok) {
-    const message = extractErrorMessage(data) ?? `Request failed (${response.status}).`;
+    const message = extractErrorMessage(data) ?? `Το αίτημα απέτυχε (${response.status}).`;
     throw new ApiError(message, response.status);
   }
 
@@ -154,9 +155,6 @@ export const api = {
     offset?: number;
   }): Promise<ListChunksResponse> => request(`/v1/chunks${buildQuery(params)}`, { method: 'GET' }),
 
-  getChunkAudio: (id: string): Promise<ChunkAudioResponse> =>
-    request(`/v1/chunks/${encodeURIComponent(id)}/audio`, { method: 'GET' }),
-
   deleteChunk: (id: string): Promise<OkResponse> =>
     request(`/v1/chunks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
@@ -174,6 +172,9 @@ export const api = {
   listConversations: (): Promise<ConversationsResponse> =>
     request('/v1/chat/conversations', { method: 'GET' }),
 
+  getSuggestions: (): Promise<SuggestionsResponse> =>
+    request('/v1/suggestions', { method: 'GET' }),
+
   listMessages: (conversationId: string): Promise<MessagesResponse> =>
     request(`/v1/chat/conversations/${encodeURIComponent(conversationId)}/messages`, {
       method: 'GET',
@@ -181,6 +182,8 @@ export const api = {
 
   deleteConversation: (conversationId: string): Promise<unknown> =>
     request(`/v1/chat/conversations/${encodeURIComponent(conversationId)}`, { method: 'DELETE' }),
+
+  getBilling: (): Promise<BillingResponse> => request('/v1/billing', { method: 'GET' }),
 
   deleteAccount: (): Promise<OkResponse> => request('/v1/account', { method: 'DELETE' }),
 };

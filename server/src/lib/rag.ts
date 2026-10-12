@@ -1,5 +1,6 @@
 import { config } from '../config';
 import { query } from '../db';
+import { ctx, decryptText } from './crypto';
 import { formatClock, formatDay, type TimeRange } from './timeparse';
 import { getEmbeddingProvider, getLlmProvider } from '../providers';
 import type { ChatMessage } from '../providers/types';
@@ -31,6 +32,17 @@ interface MatchRow {
   score: number;
 }
 
+/** Case- and accent-insensitive form used for keyword matching on decrypted text. */
+export function normalizeText(value: string): string {
+  return value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+}
+
+/**
+ * Transcript text is encrypted at rest, so Postgres can only rank by vector
+ * similarity. We over-fetch candidates, decrypt them here and apply the keyword
+ * part of the hybrid score in memory:
+ *   0.75 * cosine similarity + 0.25 * share of query terms present + 0.1 exact-phrase bonus
+ */
 export async function retrieveMemories(
   userId: string,
   question: string,
@@ -40,24 +52,38 @@ export async function retrieveMemories(
   const [embedding] = await getEmbeddingProvider().embed([question]);
   const vector = `[${embedding.join(',')}]`;
   const rows = await query<MatchRow>(
-    `SELECT * FROM match_chunks($1, $2::vector, $3, $4::timestamptz, $5::timestamptz, $6)`,
+    `SELECT * FROM match_chunks($1, $2::vector, $3::timestamptz, $4::timestamptz, $5)`,
     [
       userId,
       vector,
-      question,
       range ? range.from.toISOString() : null,
       range ? range.to.toISOString() : null,
-      limit,
+      limit * 3,
     ],
   );
-  return rows.map((r) => ({
-    chunkId: r.id,
-    sessionId: r.session_id,
-    startedAt: r.started_at,
-    endedAt: r.ended_at,
-    text: r.text,
-    score: typeof r.score === 'string' ? parseFloat(r.score) : r.score,
-  }));
+
+  const phrase = normalizeText(question).trim();
+  const terms = [...new Set(phrase.split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 4))];
+
+  return rows
+    .map((r) => {
+      const text = decryptText(r.text, ctx.chunkText(userId, r.id));
+      const haystack = normalizeText(text);
+      const similarity = typeof r.score === 'string' ? parseFloat(r.score) : r.score;
+      const termShare =
+        terms.length > 0 ? terms.filter((t) => haystack.includes(t)).length / terms.length : 0;
+      const phraseBonus = phrase.length > 0 && haystack.includes(phrase) ? 0.1 : 0;
+      return {
+        chunkId: r.id,
+        sessionId: r.session_id,
+        startedAt: r.started_at,
+        endedAt: r.ended_at,
+        text,
+        score: 0.75 * similarity + 0.25 * termShare + phraseBonus,
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
 }
 
 const SYSTEM_PROMPT = `You are the user's personal memory. You answer questions using ONLY the transcript excerpts provided below.
@@ -65,12 +91,14 @@ const SYSTEM_PROMPT = `You are the user's personal memory. You answer questions 
 Rules:
 - Each excerpt is labeled [CHUNK n | date | start-end]. Refer to concrete times and dates in your answer (e.g. "yesterday around 14:32").
 - If the excerpts do not contain the answer, say clearly that you do not have that memory. Never invent facts.
+- The messages before the question are the recent conversation history — use them to interpret follow-ups (e.g. "what else?", "and then?", "tell me more about that").
 - Be concise. Answer in the same language the user writes in.`;
 
 export async function answerWithRag(
   userId: string,
   question: string,
   range: TimeRange | null,
+  history: ChatMessage[] = [],
 ): Promise<{ answer: string; citations: Citation[] }> {
   const chunks = await retrieveMemories(userId, question, range);
 
@@ -83,6 +111,7 @@ export async function answerWithRag(
 
   const messages: ChatMessage[] = [
     { role: 'system', content: SYSTEM_PROMPT },
+    ...history,
     {
       role: 'user',
       content: `Memories:\n\n${context || '(no relevant memories found)'}\n\nToday's date: ${formatDay(new Date())}\n\nQuestion: ${question}`,

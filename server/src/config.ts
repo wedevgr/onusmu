@@ -21,6 +21,8 @@ const envSchema = z.object({
 
   MAX_UPLOAD_MB: z.coerce.number().int().default(25),
   JOB_POLL_MS: z.coerce.number().int().default(2000),
+
+  BILLING_TIMEZONE: z.string().default('Europe/Athens'),
 });
 
 export type Config = z.infer<typeof envSchema>;

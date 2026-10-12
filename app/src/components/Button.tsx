@@ -27,19 +27,17 @@ export function Button({
     variant === 'primary'
       ? theme.colors.primary
       : variant === 'danger'
-        ? theme.colors.danger
-        : variant === 'secondary'
-          ? theme.colors.surfaceMuted
-          : 'transparent';
+        ? theme.colors.dangerSurface
+        : 'transparent';
+
+  const borderColor = variant === 'secondary' ? theme.colors.border : backgroundColor;
 
   const textColor =
     variant === 'primary'
       ? theme.colors.onPrimary
       : variant === 'danger'
-        ? '#FFFFFF'
-        : variant === 'secondary'
-          ? theme.colors.text
-          : theme.colors.primary;
+        ? theme.colors.danger
+        : theme.colors.text;
 
   return (
     <Pressable
@@ -49,13 +47,15 @@ export function Button({
       style={({ pressed }) => [
         styles.base,
         compact && styles.compact,
-        { backgroundColor, opacity: disabled ? 0.5 : pressed ? 0.85 : 1 },
+        { backgroundColor, borderColor, opacity: disabled ? 0.4 : pressed ? 0.7 : 1 },
       ]}
     >
       {loading ? (
         <ActivityIndicator color={textColor} />
       ) : (
-        <Text style={[typography.label, styles.label, { color: textColor }]}>{title}</Text>
+        <Text style={[typography.label, compact ? styles.compactLabel : styles.label, { color: textColor }]}>
+          {title}
+        </Text>
       )}
     </Pressable>
   );
@@ -63,19 +63,24 @@ export function Button({
 
 const styles = StyleSheet.create({
   base: {
-    minHeight: 50,
+    minHeight: 52,
     borderRadius: radius.pill,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
     marginVertical: spacing.xs,
   },
   compact: {
-    minHeight: 38,
+    minHeight: 36,
     paddingHorizontal: spacing.md,
     alignSelf: 'flex-start',
   },
   label: {
     fontSize: 16,
+    fontWeight: '600',
+  },
+  compactLabel: {
+    fontWeight: '600',
   },
 });

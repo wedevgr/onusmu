@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { Client } from 'pg';
 import { config } from '../src/config';
+import { dbSsl } from '../src/lib/dbssl';
 
 /**
  * Applies supabase/migrations/*.sql to the database configured in DATABASE_URL,
@@ -15,7 +16,7 @@ async function main(): Promise<void> {
 
   const client = new Client({
     connectionString: config.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: dbSsl(),
   });
   await client.connect();
 

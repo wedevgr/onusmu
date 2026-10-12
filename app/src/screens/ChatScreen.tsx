@@ -16,9 +16,10 @@ import * as Crypto from 'expo-crypto';
 import type { RootStackParamList, TabParamList } from '../navigation/RootNavigator';
 import { api } from '../api/client';
 import type { ChatMessage } from '../api/types';
-import { CitationChips } from '../components/CitationChips';
-import { EmptyState } from '../components/EmptyState';
-import { Screen } from '../components/Screen';
+import { CitationChips } from '../components/CitationChips';import { Header } from '../components/Header';
+import { Icon, IconButton } from '../components/Icon';
+import { Screen, SCREEN_GUTTER } from '../components/Screen';
+import { TypingDots } from '../components/TypingDots';
 import { radius, spacing, typography, useTheme } from '../theme';
 
 type Props = BottomTabScreenProps<TabParamList, 'Chat'>;
@@ -40,10 +41,27 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
   const [sending, setSending] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>(SUGGESTIONS);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const handledInitialMessage = useRef<string | null>(null);
 
-  const loadHistory = useCallback(async (): Promise<void> => {
+  const loadHistory = useCallback(
+    async (conversationId: string): Promise<void> => {
+      try {
+        const { messages: history } = await api.listMessages(conversationId);
+        setConversationId(conversationId);
+        setMessages(history);
+      } catch {
+        setConversationId(null);
+        setMessages([]);
+      } finally {
+        setHistoryLoaded(true);
+      }
+    },
+    [],
+  );
+
+  const loadLatest = useCallback(async (): Promise<void> => {
     try {
       const { conversations } = await api.listConversations();
       if (conversations.length === 0) {
@@ -57,18 +75,45 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
         setHistoryLoaded(true);
         return;
       }
-      const { messages: history } = await api.listMessages(latest.id);
-      setConversationId(latest.id);
-      setMessages(history);
-      setHistoryLoaded(true);
+      await loadHistory(latest.id);
     } catch {
       setHistoryLoaded(true);
     }
+  }, [loadHistory]);
+
+  const requestedConversationId = route.params?.conversationId;
+  const handledConversationId = useRef<string | undefined>(undefined);
+  const initialLoadDone = useRef(false);
+
+  const loadSuggestions = useCallback((): void => {
+    api
+      .getSuggestions()
+      .then((response) => {
+        if (response.suggestions.length > 0) {
+          setSuggestions(response.suggestions.slice(0, SUGGESTIONS.length));
+        }
+      })
+      .catch(() => {
+        // Keep the static fallback suggestions.
+      });
   }, []);
 
   useEffect(() => {
-    void loadHistory();
-  }, [loadHistory]);
+    loadSuggestions();
+  }, [loadSuggestions]);
+
+  useEffect(() => {
+    if (requestedConversationId) {
+      if (handledConversationId.current !== requestedConversationId) {
+        handledConversationId.current = requestedConversationId;
+        setHistoryLoaded(false);
+        void loadHistory(requestedConversationId);
+      }
+    } else if (!initialLoadDone.current) {
+      initialLoadDone.current = true;
+      void loadLatest();
+    }
+  }, [requestedConversationId, loadHistory, loadLatest]);
 
   const send = useCallback(
     async (text: string): Promise<void> => {
@@ -101,7 +146,7 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
           },
         ]);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Could not get an answer.');
+        setError(e instanceof Error ? e.message : 'Δεν ήταν δυνατή η απάντηση.');
       } finally {
         setSending(false);
       }
@@ -124,9 +169,16 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
   }, [route.params, historyLoaded, send]);
 
   const newChat = (): void => {
+    handledConversationId.current = undefined;
     setConversationId(null);
     setMessages([]);
     setError(null);
+    navigation.setParams({ conversationId: undefined });
+    loadSuggestions();
+  };
+
+  const openHistory = (): void => {
+    rootNav.navigate('ChatHistory');
   };
 
   const openCitation = (chunkId: string, startedAt: string, sessionId: string): void => {
@@ -143,172 +195,251 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
     void send(trimmed);
   };
 
+  const canSend = !sending && input.trim().length > 0;
+  const showWelcome = historyLoaded && messages.length === 0 && !sending;
+
   return (
-    <Screen padded={false}>
+    <Screen padded={false} bottomInset={false}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={90}
       >
         <View style={styles.header}>
-          <Text style={[typography.caption, styles.disclaimer, { color: theme.colors.textMuted }]}>
-            Answers come only from your recorded memories.
-          </Text>
-          <Pressable onPress={newChat} hitSlop={8}>
-            <Text style={[typography.label, { color: theme.colors.primary }]}>New chat</Text>
-          </Pressable>
+          <Header
+            title="Συνομιλία"
+            right={
+              <View style={styles.headerButtons}>
+                <IconButton name="clock" label="Ιστορικό" filled={false} onPress={openHistory} />
+                <IconButton name="edit" label="Νέα συνομιλία" filled={false} onPress={newChat} />
+              </View>
+            }
+          />
         </View>
 
-        <FlatList
-          ref={listRef}
-          data={messages}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-          onContentSizeChange={() =>
-            listRef.current?.scrollToEnd({ animated: true })
-          }
-          ListEmptyComponent={
-            historyLoaded ? (
-              <EmptyState
-                title="Ask your memory"
-                message="Questions are answered only from things you have recorded."
-              />
-            ) : null
-          }
-          renderItem={({ item }) => {
-            const isUser = item.role === 'user';
-            return (
-              <View
-                style={[
-                  styles.bubbleWrap,
-                  isUser ? styles.bubbleRight : styles.bubbleLeft,
-                ]}
-              >
-                <View
-                  style={[
-                    styles.bubble,
-                    {
-                      backgroundColor: isUser ? theme.colors.primary : theme.colors.surface,
-                      borderColor: isUser ? theme.colors.primary : theme.colors.border,
-                    },
+        {showWelcome ? (
+          <View style={styles.welcome}>
+            <Text style={[typography.title, styles.welcomeTitle, { color: theme.colors.text }]}>
+              Ρώτα τη μνήμη σου
+            </Text>
+            <Text style={[typography.label, styles.welcomeNote, { color: theme.colors.textMuted }]}>
+              Οι απαντήσεις βασίζονται μόνο στις καταγραφές σου.
+            </Text>
+            <View style={styles.suggestions}>
+              {suggestions.map((suggestion) => (
+                <Pressable
+                  key={suggestion}
+                  accessibilityRole="button"
+                  onPress={() => void send(suggestion)}
+                  style={({ pressed }) => [
+                    styles.suggestion,
+                    theme.glass,
+                    { opacity: pressed ? 0.6 : 1 },
                   ]}
                 >
-                  <Text
-                    style={[
-                      typography.body,
-                      { color: isUser ? theme.colors.onPrimary : theme.colors.text },
-                    ]}
-                  >
+                  <Text style={[typography.label, styles.suggestionText, { color: theme.colors.text }]}>
+                    {suggestion}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : (
+          <FlatList
+            ref={listRef}
+            data={messages}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={() =>
+              listRef.current?.scrollToEnd({ animated: true })
+            }
+            ListFooterComponent={
+              sending ? (
+                <View style={styles.answer}>
+                  <TypingDots />
+                </View>
+              ) : null
+            }
+            renderItem={({ item }) => {
+              if (item.role === 'user') {
+                return (
+                  <View style={styles.questionWrap}>
+                    <View style={[styles.question, { backgroundColor: theme.colors.surfaceMuted }]}>
+                      <Text style={[styles.messageText, { color: theme.colors.text }]}>
+                        {item.content}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              }
+              return (
+                <View style={styles.answer}>
+                  <Text style={[styles.messageText, { color: theme.colors.text }]}>
                     {item.content}
                   </Text>
-                  {!isUser ? (
-                    <CitationChips
-                      citations={item.citations ?? []}
-                      onPress={(citation) =>
-                        openCitation(citation.chunkId, citation.startedAt, citation.sessionId)
-                      }
-                    />
-                  ) : null}
+                  <CitationChips
+                    citations={item.citations ?? []}
+                    onPress={(citation) =>
+                      openCitation(citation.chunkId, citation.startedAt, citation.sessionId)
+                    }
+                  />
                 </View>
-              </View>
-            );
-          }}
-        />
+              );
+            }}
+          />
+        )}
 
         {error ? (
-          <Text style={[typography.label, styles.errorLine, { color: theme.colors.danger }]}>
-            {error}
-          </Text>
+          <View style={styles.errorLine}>
+            <Icon name="alert-circle" size={14} color={theme.colors.danger} />
+            <Text style={[typography.caption, styles.errorText, { color: theme.colors.danger }]}>
+              {error}
+            </Text>
+          </View>
         ) : null}
 
-        <View style={[styles.inputRow, { borderColor: theme.colors.border }]}>
-          <TextInput
-            style={[styles.input, { color: theme.colors.text }]}
-            placeholder="Ask a question…"
-            placeholderTextColor={theme.colors.textMuted}
-            value={input}
-            onChangeText={setInput}
-            onSubmitEditing={submit}
-            returnKeyType="send"
-            blurOnSubmit={false}
-          />
-          <Pressable
-            onPress={submit}
-            disabled={sending || input.trim().length === 0}
-            style={({ pressed }) => [
-              styles.sendButton,
-              { backgroundColor: theme.colors.primary, opacity: pressed ? 0.8 : 1 },
-            ]}
-          >
-            <Text style={[typography.label, { color: theme.colors.onPrimary }]}>
-              {sending ? '…' : 'Send'}
-            </Text>
-          </Pressable>
+        <View style={styles.composer}>
+          <View style={[styles.inputRow, theme.glass]}>
+            <TextInput
+              style={[styles.input, { color: theme.colors.text }]}
+              placeholder="Ρώτα οτιδήποτε"
+              placeholderTextColor={theme.colors.textFaint}
+              value={input}
+              onChangeText={setInput}
+              onSubmitEditing={submit}
+              returnKeyType="send"
+              blurOnSubmit={false}
+            />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Αποστολή"
+              onPress={submit}
+              disabled={!canSend}
+              hitSlop={8}
+              style={({ pressed }) => [
+                styles.sendButton,
+                {
+                  backgroundColor: canSend ? theme.colors.primary : 'transparent',
+                  opacity: pressed ? 0.7 : 1,
+                },
+              ]}
+            >
+              <Icon
+                name="arrow-up"
+                size={20}
+                color={canSend ? theme.colors.onPrimary : theme.colors.textFaint}
+              />
+            </Pressable>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </Screen>
   );
 }
 
+const SUGGESTIONS = [
+  'Τι συζήτησα σήμερα;',
+  'Σύνοψε την πιο πρόσφατη καταγραφή μου',
+  'Τι είπα ότι πρέπει να κάνω;',
+];
+
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xs,
+    paddingHorizontal: SCREEN_GUTTER,
   },
-  disclaimer: {
+  headerButtons: {
+    flexDirection: 'row',
+    marginRight: -spacing.sm,
+  },
+  welcome: {
     flex: 1,
-    marginRight: spacing.md,
+    justifyContent: 'center',
+    paddingHorizontal: SCREEN_GUTTER,
+  },
+  welcomeTitle: {
+    textAlign: 'center',
+  },
+  welcomeNote: {
+    textAlign: 'center',
+    fontWeight: '400',
+    marginTop: 6,
+    marginBottom: spacing.xl,
+  },
+  suggestions: {
+    gap: spacing.sm,
+  },
+  suggestion: {
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 14,
+  },
+  suggestionText: {
+    fontWeight: '400',
   },
   listContent: {
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.md,
+    paddingHorizontal: SCREEN_GUTTER,
+    paddingBottom: spacing.lg,
     flexGrow: 1,
   },
-  bubbleWrap: {
-    marginTop: spacing.sm,
+  messageText: {
+    fontSize: 16,
+    lineHeight: 25,
   },
-  bubbleRight: {
+  questionWrap: {
     alignItems: 'flex-end',
+    marginTop: 28,
   },
-  bubbleLeft: {
-    alignItems: 'flex-start',
-  },
-  bubble: {
-    maxWidth: '85%',
-    borderRadius: radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
+  question: {
+    maxWidth: '80%',
+    borderRadius: 20,
+    borderBottomRightRadius: 6,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: 9,
+  },
+  answer: {
+    marginTop: spacing.md,
+    paddingRight: spacing.lg,
   },
   errorLine: {
-    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: SCREEN_GUTTER,
     marginBottom: spacing.xs,
+  },
+  errorText: {
+    flex: 1,
+  },
+  composer: {
+    paddingHorizontal: SCREEN_GUTTER,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
   },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    gap: spacing.sm,
+    borderRadius: radius.pill,
+    paddingLeft: 20,
+    paddingRight: 7,
+    minHeight: 52,
   },
   input: {
     flex: 1,
     fontSize: 16,
     maxHeight: 100,
+    paddingVertical: 12,
   },
   sendButton: {
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    minWidth: 64,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: spacing.sm,
   },
 });

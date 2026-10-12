@@ -5,26 +5,30 @@ import type { SessionSummary } from '../api/types';
 import * as outbox from '../lib/outbox';
 import { triggerSync } from '../lib/sync';
 import { useAuthStore } from '../stores/auth';
+import { PLAN_NAMES, usageLine, useBillingStore } from '../stores/billing';
 import { useSettingsStore } from '../stores/settings';
 import { useSyncStore, selectSyncStatus } from '../stores/sync';
+import { useShallow } from 'zustand/react/shallow';
 import { supabase } from '../supabase';
-import { formatClock, formatDayLabel, formatDurationSeconds } from '../lib/time';
-import { Button } from '../components/Button';
-import { Card } from '../components/Card';
-import { EmptyState } from '../components/EmptyState';
-import { Screen } from '../components/Screen';
+import { formatClock, formatDayLabel, formatDurationHuman } from '../lib/time';
+import { Header } from '../components/Header';
+import { Icon, IconButton } from '../components/Icon';
+import { ListGroup, ListRow } from '../components/List';
+import { Screen, SCREEN_GUTTER } from '../components/Screen';
 import { spacing, typography, useTheme } from '../theme';
 
 export default function SettingsScreen(): React.JSX.Element {
   const theme = useTheme();
   const user = useAuthStore((state) => state.user);
-  const syncStatus = useSyncStore(selectSyncStatus);
+  const syncStatus = useSyncStore(useShallow(selectSyncStatus));
   const keepAudio = useSettingsStore((state) => state.keepAudio);
   const setKeepAudio = useSettingsStore((state) => state.setKeepAudio);
   const setLoaded = useSettingsStore((state) => state.setLoaded);
+  const billing = useBillingStore((state) => state.status);
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const loadSessions = useCallback(() => {
     api
@@ -35,12 +39,13 @@ export default function SettingsScreen(): React.JSX.Element {
         setSessionsError(null);
       })
       .catch((e: unknown) => {
-        setSessionsError(e instanceof Error ? e.message : 'Could not load sessions.');
+        setSessionsError(e instanceof Error ? e.message : 'Δεν φορτώθηκαν οι καταγραφές.');
       });
   }, []);
 
   useEffect(() => {
     loadSessions();
+    void useBillingStore.getState().refresh();
     api
       .getSettings()
       .then((response) => {
@@ -54,25 +59,25 @@ export default function SettingsScreen(): React.JSX.Element {
     setKeepAudio(value);
     api.updateSettings(value).catch(() => {
       setKeepAudio(!value);
-      Alert.alert('Could not save', 'The setting was not updated. Please try again.');
+      Alert.alert('Δεν αποθηκεύτηκε', 'Η ρύθμιση δεν ενημερώθηκε. Δοκίμασε ξανά.');
     });
   };
 
   const deleteSession = (session: SessionSummary): void => {
     Alert.alert(
-      'Delete session?',
-      `The session from ${formatDayLabel(session.startedAt)} ${formatClock(session.startedAt)} will be permanently deleted.`,
+      'Διαγραφή καταγραφής;',
+      `Η καταγραφή ${formatDayLabel(session.startedAt)} ${formatClock(session.startedAt)} θα διαγραφεί οριστικά.`,
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: 'Άκυρο', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Διαγραφή',
           style: 'destructive',
           onPress: () => {
             api
               .deleteSession(session.id)
               .then(loadSessions)
               .catch((e: unknown) =>
-                Alert.alert('Delete failed', e instanceof Error ? e.message : 'Please try again.'),
+                Alert.alert('Η διαγραφή απέτυχε', e instanceof Error ? e.message : 'Δοκίμασε ξανά.'),
               );
           },
         },
@@ -82,21 +87,21 @@ export default function SettingsScreen(): React.JSX.Element {
 
   const deleteAllMemories = (): void => {
     Alert.alert(
-      'Delete all memories?',
-      'Every recorded session and transcription will be permanently deleted.',
+      'Διαγραφή όλων των μνημών;',
+      'Όλες οι καταγραφές και οι μεταγραφές θα διαγραφούν οριστικά.',
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: 'Άκυρο', style: 'cancel' },
         {
-          text: 'Continue',
+          text: 'Συνέχεια',
           style: 'destructive',
           onPress: () => {
             Alert.alert(
-              'Are you absolutely sure?',
-              'This cannot be undone. All of your memories will be gone forever.',
+              'Είσαι απολύτως σίγουρος;',
+              'Δεν υπάρχει αναίρεση. Όλες οι μνήμες σου θα χαθούν για πάντα.',
               [
-                { text: 'Cancel', style: 'cancel' },
+                { text: 'Άκυρο', style: 'cancel' },
                 {
-                  text: 'Delete everything',
+                  text: 'Διαγραφή όλων',
                   style: 'destructive',
                   onPress: () => {
                     void (async () => {
@@ -108,7 +113,7 @@ export default function SettingsScreen(): React.JSX.Element {
                         triggerSync();
                         loadSessions();
                       } catch {
-                        Alert.alert('Delete failed', 'Some memories may not have been deleted.');
+                        Alert.alert('Η διαγραφή απέτυχε', 'Κάποιες μνήμες ίσως δεν διαγράφηκαν.');
                       }
                     })();
                   },
@@ -123,19 +128,19 @@ export default function SettingsScreen(): React.JSX.Element {
 
   const deleteAccount = (): void => {
     Alert.alert(
-      'Delete account?',
-      'Your account and all data on the server will be permanently deleted.',
+      'Διαγραφή λογαριασμού;',
+      'Ο λογαριασμός σου και όλα τα δεδομένα στον διακομιστή θα διαγραφούν οριστικά.',
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: 'Άκυρο', style: 'cancel' },
         {
-          text: 'Delete my account',
+          text: 'Διαγραφή λογαριασμού',
           style: 'destructive',
           onPress: () => {
             void (async () => {
               try {
                 await api.deleteAccount();
               } catch (e) {
-                Alert.alert('Delete failed', e instanceof Error ? e.message : 'Please try again.');
+                Alert.alert('Η διαγραφή απέτυχε', e instanceof Error ? e.message : 'Δοκίμασε ξανά.');
                 return;
               }
               await supabase.auth.signOut();
@@ -150,97 +155,158 @@ export default function SettingsScreen(): React.JSX.Element {
     void supabase.auth.signOut();
   };
 
+  const syncSummary =
+    syncStatus.failed > 0
+      ? `${syncStatus.failed} απέτυχαν. Ο ήχος μένει στη συσκευή μέχρι την επόμενη προσπάθεια.`
+      : syncStatus.uploading
+        ? 'Ανέβασμα τώρα'
+        : syncStatus.pending > 0
+          ? `${syncStatus.pending} σε αναμονή`
+          : 'Όλα έχουν ανέβει';
+
+  const syncColor =
+    syncStatus.failed > 0
+      ? theme.colors.danger
+      : syncStatus.uploading || syncStatus.pending > 0
+        ? theme.colors.warning
+        : theme.colors.success;
+
+  const sectionLabel = [typography.caption, styles.section, { color: theme.colors.textMuted }];
+
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={[typography.title, styles.title, { color: theme.colors.text }]}>Settings</Text>
+    <Screen padded={false} bottomInset={false}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Header title="Ρυθμίσεις" />
 
-        <Card>
-          <Text style={[typography.label, styles.label, { color: theme.colors.textMuted }]}>
-            Signed in as
-          </Text>
-          <Text style={[typography.body, { color: theme.colors.text }]}>{user?.email ?? '—'}</Text>
-        </Card>
+        <ListGroup>
+          <ListRow
+            first
+            icon="user"
+            title={user?.email ?? 'Άγνωστος λογαριασμός'}
+            subtitle="Συνδεδεμένος λογαριασμός"
+          />
+        </ListGroup>
 
-        <Card>
-          <View style={styles.rowBetween}>
-            <View style={styles.flex}>
-              <Text style={[typography.body, { color: theme.colors.text }]}>
-                Keep original audio
-              </Text>
-              <Text
-                style={[typography.caption, styles.mutedLine, { color: theme.colors.textMuted }]}
-              >
-                Store the raw recordings alongside transcripts.
-              </Text>
-            </View>
-            <Switch value={keepAudio} onValueChange={toggleKeepAudio} />
-          </View>
-        </Card>
+        {billing ? (
+          <>
+            <Text style={sectionLabel}>Πλάνο</Text>
+            <ListGroup>
+              <ListRow
+                first
+                icon="award"
+                title={PLAN_NAMES[billing.plan]}
+                subtitle={usageLine(billing)}
+              />
+            </ListGroup>
+          </>
+        ) : null}
 
-        <Card>
-          <Text style={[typography.label, styles.label, { color: theme.colors.textMuted }]}>
-            Sync status
-          </Text>
-          <Text style={[typography.body, { color: theme.colors.text }]}>
-            {syncStatus.pending} pending · {syncStatus.uploading ? 'uploading now' : 'idle'} ·{' '}
-            {syncStatus.failed} failed
-          </Text>
-          {syncStatus.failed > 0 ? (
-            <Text style={[typography.caption, styles.mutedLine, { color: theme.colors.danger }]}>
-              Failed items keep their audio on this device and can be retried by the server later.
-            </Text>
+        <Text style={sectionLabel}>Καταγραφή</Text>
+        <ListGroup>
+          <ListRow
+            first
+            icon="music"
+            title="Διατήρηση αρχικού ήχου"
+            subtitle="Αποθήκευση του ήχου μαζί με τις μεταγραφές."
+            right={
+              <Switch
+                value={keepAudio}
+                onValueChange={toggleKeepAudio}
+                trackColor={{ false: theme.colors.surfaceMuted, true: theme.colors.success }}
+                thumbColor="#FFFFFF"
+                ios_backgroundColor={theme.colors.surfaceMuted}
+              />
+            }
+          />
+          <ListRow
+            icon="upload-cloud"
+            title="Συγχρονισμός"
+            subtitle={syncSummary}
+            right={<View style={[styles.syncDot, { backgroundColor: syncColor }]} />}
+          />
+        </ListGroup>
+
+        <Text style={sectionLabel}>Καταγραφές</Text>
+        <ListGroup>
+          <ListRow
+            first
+            icon="archive"
+            title="Ιστορικό καταγραφών"
+            subtitle={
+              sessionsError !== null
+                ? 'Δεν φορτώθηκαν οι καταγραφές'
+                : sessions.length === 0
+                  ? 'Δεν υπάρχει καμία καταγραφή ακόμα'
+                  : `${sessions.length} ${sessions.length === 1 ? 'καταγραφή' : 'καταγραφές'}`
+            }
+            onPress={() => setHistoryOpen(!historyOpen)}
+            right={
+              <Icon
+                name={historyOpen ? 'chevron-up' : 'chevron-down'}
+                size={20}
+                color={theme.colors.textFaint}
+              />
+            }
+          />
+          {historyOpen && sessionsError !== null ? (
+            <ListRow icon="refresh-cw" title="Δοκίμασε ξανά" onPress={loadSessions} />
           ) : null}
-        </Card>
+          {historyOpen && sessionsError === null
+            ? sessions.map((session) => (
+                <ListRow
+                  key={session.id}
+                  icon="mic"
+                  title={`${formatDayLabel(session.startedAt)} στις ${formatClock(session.startedAt)}`}
+                  subtitle={`${formatDurationHuman(session.durationSeconds)}, ${session.chunkCount} ${
+                    session.chunkCount === 1 ? 'τμήμα' : 'τμήματα'
+                  }`}
+                  right={
+                    <IconButton
+                      name="trash-2"
+                      label="Διαγραφή καταγραφής"
+                      filled={false}
+                      color={theme.colors.textMuted}
+                      onPress={() => deleteSession(session)}
+                    />
+                  }
+                />
+              ))
+            : null}
+        </ListGroup>
 
-        <Text style={[typography.heading, styles.section, { color: theme.colors.text }]}>
-          Delete a recording session
-        </Text>
-        {sessionsError !== null ? (
-          <EmptyState title="Could not load sessions" message={sessionsError} />
-        ) : sessions.length === 0 ? (
-          <EmptyState title="No sessions" message="Nothing has been recorded yet." />
-        ) : (
-          sessions.map((session) => (
-            <Card key={session.id}>
-              <View style={styles.rowBetween}>
-                <View style={styles.flex}>
-                  <Text style={[typography.label, { color: theme.colors.text }]}>
-                    {formatDayLabel(session.startedAt)} {formatClock(session.startedAt)}
-                  </Text>
-                  <Text
-                    style={[typography.caption, styles.mutedLine, { color: theme.colors.textMuted }]}
-                  >
-                    {formatDurationSeconds(session.durationSeconds)} · {session.chunkCount} chunk
-                    {session.chunkCount === 1 ? '' : 's'}
-                  </Text>
-                </View>
-                <Button title="Delete" variant="ghost" compact onPress={() => deleteSession(session)} />
-              </View>
-            </Card>
-          ))
-        )}
+        <Text style={sectionLabel}>Απόρρητο</Text>
+        <ListGroup>
+          <ListRow
+            first
+            icon="shield"
+            title="Η καταγραφή ξεκινά μόνο όταν το επιλέξεις εσύ."
+          />
+          <ListRow
+            icon="radio"
+            title="Η ένδειξη μικροφώνου εμφανίζεται όποτε καταγράφεται ήχος."
+          />
+          <ListRow
+            icon="lock"
+            title="Τα δεδομένα σου ανήκουν σε εσένα και διαγράφονται όποτε θέλεις."
+          />
+        </ListGroup>
 
-        <View style={styles.dangerZone}>
-          <Button title="Delete all memories" variant="secondary" onPress={deleteAllMemories} />
-          <Button title="Delete account" variant="secondary" onPress={deleteAccount} />
-          <Button title="Log out" variant="danger" onPress={logout} />
-        </View>
-
-        <Card>
-          <Text style={[typography.heading, styles.privacyTitle, { color: theme.colors.text }]}>
-            Privacy
-          </Text>
-          <Text style={[typography.body, styles.privacyLine, { color: theme.colors.textMuted }]}>
-            • Recordings start only when you press Start.
-          </Text>
-          <Text style={[typography.body, styles.privacyLine, { color: theme.colors.textMuted }]}>
-            • Your microphone indicator shows whenever audio is being captured.
-          </Text>
-          <Text style={[typography.body, styles.privacyLine, { color: theme.colors.textMuted }]}>
-            • Your data belongs to you and can be deleted at any time.
-          </Text>
-        </Card>
+        <Text style={sectionLabel}>Λογαριασμός</Text>
+        <ListGroup>
+          <ListRow first icon="log-out" title="Αποσύνδεση" onPress={logout} />
+          <ListRow
+            icon="trash-2"
+            title="Διαγραφή όλων των μνημών"
+            danger
+            onPress={deleteAllMemories}
+          />
+          <ListRow
+            icon="user-x"
+            title="Διαγραφή λογαριασμού"
+            danger
+            onPress={deleteAccount}
+          />
+        </ListGroup>
       </ScrollView>
     </Screen>
   );
@@ -248,38 +314,17 @@ export default function SettingsScreen(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   content: {
+    paddingHorizontal: SCREEN_GUTTER,
     paddingBottom: spacing.xl,
   },
-  title: {
-    marginTop: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  label: {
-    marginBottom: spacing.xs,
-  },
-  mutedLine: {
-    marginTop: spacing.xs,
-  },
-  rowBetween: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-  },
-  flex: {
-    flex: 1,
-  },
   section: {
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  dangerZone: {
     marginTop: spacing.lg,
-  },
-  privacyTitle: {
     marginBottom: spacing.sm,
+    marginLeft: spacing.md,
   },
-  privacyLine: {
-    marginBottom: spacing.xs,
+  syncDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
 });

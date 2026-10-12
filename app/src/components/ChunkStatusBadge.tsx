@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { radius, spacing, typography, useTheme } from '../theme';
+import { spacing, typography, useTheme, type ThemeColors } from '../theme';
 
 interface ChunkStatusBadgeProps {
   status: string;
@@ -8,53 +8,50 @@ interface ChunkStatusBadgeProps {
 
 interface BadgeStyle {
   label: string;
-  foreground: keyof ReturnType<typeof useTheme>['colors'];
-  background: keyof ReturnType<typeof useTheme>['colors'];
+  color: keyof ThemeColors;
 }
 
-function resolve(status: string): BadgeStyle {
+function resolve(status: string): BadgeStyle | null {
   switch (status.toLowerCase()) {
     case 'completed':
     case 'done':
     case 'transcribed':
-      return { label: 'Transcribed', foreground: 'success', background: 'surfaceMuted' };
+      return null;
     case 'processing':
     case 'transcribing':
-      return { label: 'Processing', foreground: 'warning', background: 'surfaceMuted' };
+      return { label: 'Επεξεργασία', color: 'warning' };
     case 'failed':
     case 'error':
-      return { label: 'Failed', foreground: 'danger', background: 'dangerSurface' };
+      return { label: 'Απέτυχε', color: 'danger' };
     default:
-      return { label: 'Pending', foreground: 'textMuted', background: 'surfaceMuted' };
+      return { label: 'Σε αναμονή', color: 'textMuted' };
   }
 }
 
-export function ChunkStatusBadge({ status }: ChunkStatusBadgeProps): React.JSX.Element {
+// Finished chunks are the normal case and stay unmarked; only exceptions get a status.
+export function ChunkStatusBadge({ status }: ChunkStatusBadgeProps): React.JSX.Element | null {
   const theme = useTheme();
   const badge = resolve(status);
+  if (badge === null) return null;
+  const color = theme.colors[badge.color];
   return (
-    <View
-      style={[
-        styles.badge,
-        { backgroundColor: theme.colors[badge.background] },
-      ]}
-    >
-      <Text style={[typography.caption, styles.label, { color: theme.colors[badge.foreground] }]}>
-        {badge.label}
-      </Text>
+    <View style={styles.badge}>
+      <View style={[styles.dot, { backgroundColor: color }]} />
+      <Text style={[typography.overline, { color }]}>{badge.label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   badge: {
-    alignSelf: 'flex-start',
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    marginTop: spacing.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: spacing.sm,
   },
-  label: {
-    fontWeight: '600',
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
 });

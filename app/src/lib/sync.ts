@@ -88,8 +88,13 @@ async function processEntry(entry: OutboxEntry): Promise<'ok' | 'retry-later' | 
     await remove(entry.id);
     return 'ok';
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
     const status = err instanceof ApiError ? err.status : 0;
+    const message =
+      status === 402
+        ? 'Έφτασες το όριο καταγραφής του πλάνου σου.'
+        : err instanceof Error
+          ? err.message
+          : String(err);
     if (status >= 400 && status < 500 && status !== 401) {
       // Permanent failure (e.g. rejected file): keep the file, surface the error.
       await markFailed(entry.id, message);
@@ -133,6 +138,17 @@ export async function stopRemoteSession(localId: string, endedAt: string): Promi
   } catch {
     // Best effort: the server also derives ended_at from chunk timestamps.
   }
+}
+
+/** Force an immediate sync attempt (e.g. right after enqueueing or clearing the outbox). */
+export function triggerSync(): void {
+  void processOutbox();
+}
+
+/** Called once from App on startup: loads the persisted outbox and starts the sync loop. */
+export function bootstrapSync(): void {
+  void hydrateOutbox();
+  startSyncLoop();
 }
 
 export function startSyncLoop(): void {

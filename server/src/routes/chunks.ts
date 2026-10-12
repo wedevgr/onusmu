@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { query, queryOne } from '../db';
 import { AppError } from '../lib/errors';
-import { removeAudio, signedAudioUrl } from '../lib/storage';
+import { ctx, decryptText } from '../lib/crypto';
+import { downloadAudio, removeAudio } from '../lib/storage';
 
 const listChunksSchema = z.object({
   sessionId: z.string().uuid().optional(),
@@ -47,10 +48,15 @@ export default async function chunkRoutes(app: FastifyInstance): Promise<void> {
         params.offset,
       ],
     );
-    return { chunks: rows };
+    return {
+      chunks: rows.map((r) => ({
+        ...r,
+        text: decryptText(r.text, ctx.chunkText(request.userId, r.id)),
+      })),
+    };
   });
 
-  app.get('/chunks/:id/audio', async (request) => {
+  app.get('/chunks/:id/audio', async (request, reply) => {
     const { id } = request.params as { id: string };
     const chunk = await queryOne<{ audio_path: string | null }>(
       `SELECT audio_path FROM transcript_chunks WHERE id = $1 AND user_id = $2`,
@@ -58,9 +64,10 @@ export default async function chunkRoutes(app: FastifyInstance): Promise<void> {
     );
     if (!chunk) throw new AppError(404, 'Chunk not found');
     if (!chunk.audio_path) throw new AppError(404, 'Audio was deleted (retention setting)');
-    const url = await signedAudioUrl(chunk.audio_path);
-    if (!url) throw new AppError(404, 'Audio not available');
-    return { url };
+    // Stored audio is ciphertext, so a signed bucket URL would be unplayable; stream it decrypted.
+    const audio = await downloadAudio(chunk.audio_path).catch(() => null);
+    if (!audio) throw new AppError(404, 'Audio not available');
+    return reply.type('audio/m4a').send(audio);
   });
 
   app.delete('/chunks/:id', async (request) => {

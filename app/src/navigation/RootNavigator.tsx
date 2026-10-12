@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import {
   DarkTheme,
   DefaultTheme,
@@ -13,16 +13,18 @@ import {
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack';
 import { useAuthStore } from '../stores/auth';
-import { darkTheme, lightTheme, useTheme } from '../theme';
+import { darkTheme, lightTheme, spacing, typography, useTheme } from '../theme';
 import AuthScreen from '../screens/AuthScreen';
 import HomeScreen from '../screens/HomeScreen';
 import RecordingScreen from '../screens/RecordingScreen';
 import TimelineScreen from '../screens/TimelineScreen';
 import SearchScreen from '../screens/SearchScreen';
 import ChatScreen from '../screens/ChatScreen';
+import ChatHistoryScreen from '../screens/ChatHistoryScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import { GlassTabBar } from '../components/GlassTabBar';
 import { Screen } from '../components/Screen';
-import { EmptyState } from '../components/EmptyState';
+import { Icon, Logo, type IconName } from '../components/Icon';
 
 export type TimelineParams = {
   highlightChunkId?: string;
@@ -32,6 +34,7 @@ export type TimelineParams = {
 
 export type ChatParams = {
   initialMessage?: string;
+  conversationId?: string;
 };
 
 export type TabParamList = {
@@ -46,6 +49,7 @@ export type RootStackParamList = {
   Auth: undefined;
   Main: NavigatorScreenParams<TabParamList>;
   Recording: undefined;
+  ChatHistory: undefined;
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -53,9 +57,9 @@ export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
 
-function tabIcon(glyph: string) {
-  return function TabIcon({ color }: { color: string }): React.JSX.Element {
-    return <Text style={{ fontSize: 18, color }}>{glyph}</Text>;
+function tabIcon(name: IconName) {
+  return function TabIcon({ color, size }: { color: string; size: number }): React.JSX.Element {
+    return <Icon name={name} color={color} size={size} />;
   };
 }
 
@@ -68,7 +72,7 @@ function buildNavigationTheme(dark: boolean): NavigationTheme {
       ...base.colors,
       primary: colors.primary,
       background: colors.background,
-      card: colors.surface,
+      card: colors.background,
       text: colors.text,
       border: colors.border,
     },
@@ -76,43 +80,35 @@ function buildNavigationTheme(dark: boolean): NavigationTheme {
 }
 
 function MainTabs(): React.JSX.Element {
-  const theme = useTheme();
   return (
     <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: theme.colors.primary,
-        tabBarInactiveTintColor: theme.colors.textMuted,
-        tabBarStyle: {
-          backgroundColor: theme.colors.surface,
-          borderTopColor: theme.colors.border,
-        },
-      }}
+      tabBar={(props) => <GlassTabBar {...props} />}
+      screenOptions={{ headerShown: false }}
     >
       <Tab.Screen
         name="Home"
         component={HomeScreen}
-        options={{ title: 'Home', tabBarIcon: tabIcon('🏠') }}
+        options={{ title: 'Αρχική', tabBarIcon: tabIcon('home') }}
       />
       <Tab.Screen
         name="Timeline"
         component={TimelineScreen}
-        options={{ title: 'Timeline', tabBarIcon: tabIcon('🕘') }}
+        options={{ title: 'Χρονολόγιο', tabBarIcon: tabIcon('clock') }}
       />
       <Tab.Screen
         name="Search"
         component={SearchScreen}
-        options={{ title: 'Search', tabBarIcon: tabIcon('🔍') }}
+        options={{ title: 'Αναζήτηση', tabBarIcon: tabIcon('search') }}
       />
       <Tab.Screen
         name="Chat"
         component={ChatScreen}
-        options={{ title: 'Chat', tabBarIcon: tabIcon('💬') }}
+        options={{ title: 'Συνομιλία', tabBarIcon: tabIcon('message-circle') }}
       />
       <Tab.Screen
         name="Settings"
         component={SettingsScreen}
-        options={{ title: 'Settings', tabBarIcon: tabIcon('⚙️') }}
+        options={{ title: 'Ρυθμίσεις', tabBarIcon: tabIcon('settings') }}
       />
     </Tab.Navigator>
   );
@@ -127,7 +123,13 @@ export default function RootNavigator(): React.JSX.Element {
     <NavigationContainer theme={buildNavigationTheme(theme.dark)}>
       {!initialized ? (
         <Screen>
-          <EmptyState title="AI Memory" message="Loading your session…" />
+          <View style={styles.splash}>
+            <Logo size={72} />
+            <Text style={[typography.heading, styles.splashTitle, { color: theme.colors.text }]}>
+              AI Memory
+            </Text>
+            <ActivityIndicator color={theme.colors.textMuted} />
+          </View>
         </Screen>
       ) : (
         <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -141,6 +143,11 @@ export default function RootNavigator(): React.JSX.Element {
                 component={RecordingScreen}
                 options={{ animation: 'slide_from_bottom' }}
               />
+              <Stack.Screen
+                name="ChatHistory"
+                component={ChatHistoryScreen}
+                options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
+              />
             </>
           )}
         </Stack.Navigator>
@@ -148,3 +155,15 @@ export default function RootNavigator(): React.JSX.Element {
     </NavigationContainer>
   );
 }
+
+const styles = StyleSheet.create({
+  splash: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  splashTitle: {
+    marginTop: spacing.md,
+    marginBottom: spacing.lg,
+  },
+});

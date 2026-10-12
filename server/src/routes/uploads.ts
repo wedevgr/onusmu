@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { query, queryOne } from '../db';
+import { assertWithinQuota, recordUsage, usageInstant } from '../lib/billing';
 import { AppError } from '../lib/errors';
 import { removeAudio, uploadAudio } from '../lib/storage';
 import { enqueueJob } from '../queue/jobs';
@@ -29,6 +30,11 @@ export default async function uploadRoutes(app: FastifyInstance): Promise<void> 
       throw new AppError(400, 'Missing audio file (form field "file")');
     }
     const body = fieldsSchema.parse(fields);
+    const durationMs = body.endedAt.getTime() - body.startedAt.getTime();
+    if (durationMs <= 0) throw new AppError(400, 'endedAt must be after startedAt');
+
+    const billedAt = usageInstant(body.startedAt);
+    await assertWithinQuota(request.userId, billedAt);
 
     // Upsert session so uploads never fail just because the session row is missing.
     const session = await queryOne<{ id: string }>(
@@ -60,6 +66,8 @@ export default async function uploadRoutes(app: FastifyInstance): Promise<void> 
         [session.id, body.endedAt.toISOString()],
       );
       await enqueueJob(chunk.id, request.userId);
+      // Rounded down so the server never counts more than the client's own clock did.
+      await recordUsage(request.userId, billedAt, Math.max(1, Math.floor(durationMs / 1000)));
     } catch (err) {
       // Roll back what we can; the chunk row stays so the client knows the upload failed.
       await removeAudio(audioPath).catch(() => undefined);

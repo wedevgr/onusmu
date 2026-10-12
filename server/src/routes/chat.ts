@@ -1,9 +1,17 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { query, queryOne } from '../db';
 import { AppError } from '../lib/errors';
 import { answerWithRag, type Citation } from '../lib/rag';
 import { parseTimeExpressions } from '../lib/timeparse';
+import {
+  ctx,
+  decryptCitations,
+  decryptText,
+  encryptCitations,
+  encryptText,
+} from '../lib/crypto';
 
 const chatSchema = z.object({
   message: z.string().min(1).max(4000),
@@ -23,42 +31,81 @@ export default async function chatRoutes(app: FastifyInstance): Promise<void> {
       );
       if (!owned) throw new AppError(404, 'Conversation not found');
     } else {
-      const conv = await queryOne<{ id: string }>(
-        `INSERT INTO chat_conversations (user_id, title) VALUES ($1, $2) RETURNING id`,
-        [userId, body.message.slice(0, 40)],
-      );
-      conversationId = conv?.id ?? null;
+      // Ids are generated here (not by the database) because each encrypted
+      // value is bound to the id of the row it is stored in.
+      conversationId = randomUUID();
+      await query(`INSERT INTO chat_conversations (id, user_id, title) VALUES ($1, $2, $3)`, [
+        conversationId,
+        userId,
+        encryptText(body.message.slice(0, 40), ctx.conversationTitle(userId, conversationId)),
+      ]);
     }
-    if (!conversationId) throw new AppError(500, 'Failed to create conversation');
 
+    const userMessageId = randomUUID();
     await query(
-      `INSERT INTO chat_messages (conversation_id, user_id, role, content) VALUES ($1, $2, 'user', $3)`,
-      [conversationId, userId, body.message],
+      `INSERT INTO chat_messages (id, conversation_id, user_id, role, content)
+       VALUES ($1, $2, $3, 'user', $4)`,
+      [
+        userMessageId,
+        conversationId,
+        userId,
+        encryptText(body.message, ctx.messageContent(userId, userMessageId)),
+      ],
     );
+
+    const historyRows = await query<{ id: string; role: 'user' | 'assistant'; content: string }>(
+      `SELECT id, role, content FROM chat_messages
+       WHERE conversation_id = $1 AND user_id = $2 AND id <> $3
+       ORDER BY created_at DESC LIMIT 10`,
+      [conversationId, userId, userMessageId],
+    );
+    const history = historyRows.reverse().map((m) => ({
+      role: m.role,
+      content: decryptText(m.content, ctx.messageContent(userId, m.id)).slice(0, 1000),
+    }));
 
     const range = parseTimeExpressions(body.message);
-    const { answer, citations } = await answerWithRag(userId, body.message, range);
+    const { answer, citations } = await answerWithRag(userId, body.message, range, history);
 
-    const saved = await queryOne<{ id: string }>(
-      `INSERT INTO chat_messages (conversation_id, user_id, role, content, citations)
-       VALUES ($1, $2, 'assistant', $3, $4::jsonb)
-       RETURNING id`,
-      [conversationId, userId, answer, JSON.stringify(citations)],
+    const messageId = randomUUID();
+    await query(
+      `INSERT INTO chat_messages (id, conversation_id, user_id, role, content, citations)
+       VALUES ($1, $2, $3, 'assistant', $4, $5::jsonb)`,
+      [
+        messageId,
+        conversationId,
+        userId,
+        encryptText(answer, ctx.messageContent(userId, messageId)),
+        JSON.stringify(encryptCitations(citations, ctx.messageCitation(userId, messageId))),
+      ],
     );
 
-    return { conversationId, messageId: saved?.id ?? null, answer, citations };
+    return { conversationId, messageId, answer, citations };
   });
 
   app.get('/chat/conversations', async (request) => {
-    const conversations = await query<{ id: string; title: string; createdAt: Date }>(
-      `SELECT id, title, created_at AS "createdAt"
-       FROM chat_conversations
-       WHERE user_id = $1
-       ORDER BY created_at DESC
+    const conversations = await query<{
+      id: string;
+      title: string;
+      createdAt: Date;
+      updatedAt: Date;
+    }>(
+      `SELECT c.id, c.title, c.created_at AS "createdAt",
+              COALESCE(MAX(m.created_at), c.created_at) AS "updatedAt"
+       FROM chat_conversations c
+       LEFT JOIN chat_messages m ON m.conversation_id = c.id
+       WHERE c.user_id = $1
+       GROUP BY c.id
+       ORDER BY "updatedAt" DESC
        LIMIT 50`,
       [request.userId],
     );
-    return { conversations };
+    return {
+      conversations: conversations.map((c) => ({
+        ...c,
+        title: decryptText(c.title, ctx.conversationTitle(request.userId, c.id)),
+      })),
+    };
   });
 
   app.get('/chat/conversations/:id/messages', async (request) => {
@@ -82,7 +129,13 @@ export default async function chatRoutes(app: FastifyInstance): Promise<void> {
        LIMIT 500`,
       [id, request.userId],
     );
-    return { messages };
+    return {
+      messages: messages.map((m) => ({
+        ...m,
+        content: decryptText(m.content, ctx.messageContent(request.userId, m.id)),
+        citations: decryptCitations(m.citations, ctx.messageCitation(request.userId, m.id)),
+      })),
+    };
   });
 
   app.delete('/chat/conversations/:id', async (request) => {

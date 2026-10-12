@@ -16,7 +16,7 @@ export default function App(): React.JSX.Element {
   return (
     <SafeAreaProvider>
       <RootNavigator />
-      <StatusBar style="auto" />
+      <StatusBar style="light" />
     </SafeAreaProvider>
   );
 }

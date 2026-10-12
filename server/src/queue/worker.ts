@@ -1,4 +1,5 @@
 import { query, queryOne } from '../db';
+import { ctx, encryptText } from '../lib/crypto';
 import { downloadAudio, removeAudio } from '../lib/storage';
 import { getEmbeddingProvider, getSttProvider } from '../providers';
 import type { AudioJob } from './jobs';
@@ -49,7 +50,7 @@ export async function processChunkJob(job: AudioJob): Promise<void> {
 
   await query(
     `UPDATE transcript_chunks SET text = $2, processing_status = 'embedding' WHERE id = $1`,
-    [chunk.id, text],
+    [chunk.id, encryptText(text, ctx.chunkText(chunk.user_id, chunk.id))],
   );
 
   const [embedding] = await getEmbeddingProvider().embed([text]);

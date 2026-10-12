@@ -1,13 +1,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
-  FlatList,
+  Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useShallow } from 'zustand/react/shallow';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import * as Crypto from 'expo-crypto';
@@ -16,16 +19,29 @@ import { api } from '../api/client';
 import type { SessionSummary } from '../api/types';
 import { recorder } from '../lib/recorder';
 import * as outbox from '../lib/outbox';
-import { triggerSync } from '../lib/sync';
-import { useAuthStore } from '../stores/auth';
+import { stopRemoteSession, triggerSync } from '../lib/sync';
+import {
+  limitReachedMessage,
+  remainingLine,
+  remainingRecordingMs,
+  useBillingStore,
+} from '../stores/billing';
 import { useRecordingStore } from '../stores/recording';
 import { useSyncStore, selectSyncStatus } from '../stores/sync';
-import { formatClock, formatDayLabel, formatDurationSeconds, startOfTodayIso } from '../lib/time';
-import { Button } from '../components/Button';
-import { Card } from '../components/Card';
+import {
+  formatClock,
+  formatDayLabel,
+  formatDurationHuman,
+  formatDurationMs,
+  formatLongDate,
+  greetingFor,
+  startOfTodayIso,
+} from '../lib/time';
 import { EmptyState } from '../components/EmptyState';
+import { Icon } from '../components/Icon';
+import { ListGroup, ListRow } from '../components/List';
 import { RecordingDot } from '../components/RecordingDot';
-import { Screen } from '../components/Screen';
+import { Screen, SCREEN_GUTTER } from '../components/Screen';
 import { radius, spacing, typography, useTheme } from '../theme';
 
 type Props = BottomTabScreenProps<TabParamList, 'Home'>;
@@ -41,17 +57,29 @@ function dayOffsetFor(iso: string): number {
 export default function HomeScreen({ navigation }: Props): React.JSX.Element {
   const theme = useTheme();
   const rootNav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const user = useAuthStore((state) => state.user);
   const recording = useRecordingStore();
-  const syncStatus = useSyncStore(selectSyncStatus);
+  const syncStatus = useSyncStore(useShallow(selectSyncStatus));
+  const billing = useBillingStore((state) => state.status);
 
   const [starting, setStarting] = useState(false);
   const [question, setQuestion] = useState('');
   const [todaySeconds, setTodaySeconds] = useState<number | null>(null);
   const [recent, setRecent] = useState<SessionSummary[]>([]);
   const [recentError, setRecentError] = useState<string | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
+
+  const startedAtMs = recording.startedAt ? new Date(recording.startedAt).getTime() : null;
+
+  useEffect(() => {
+    if (!recording.active || startedAtMs === null) return;
+    const tick = () => setElapsedMs(Date.now() - startedAtMs);
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [recording.active, startedAtMs]);
 
   const load = useCallback(() => {
+    void useBillingStore.getState().refresh();
     api
       .listSessions({ from: startOfTodayIso() })
       .then((response) => {
@@ -68,7 +96,7 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
       })
       .catch((e: unknown) => {
         setRecent([]);
-        setRecentError(e instanceof Error ? e.message : 'Could not load sessions.');
+        setRecentError(e instanceof Error ? e.message : 'Δεν φορτώθηκαν οι καταγραφές.');
       });
   }, []);
 
@@ -78,11 +106,26 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
     return unsubscribe;
   }, [load, navigation]);
 
+  // After a recording stops, the server session appears only once chunks finish
+  // uploading — retry a few times so it shows up fast.
+  const lastStoppedAt = useRecordingStore((state) => state.lastStoppedAt);
+  useEffect(() => {
+    if (!lastStoppedAt) return;
+    const timers = [1500, 4000, 8000].map((ms) => setTimeout(load, ms));
+    return () => timers.forEach(clearTimeout);
+  }, [lastStoppedAt, load]);
+
   const startRecording = async (): Promise<void> => {
     setStarting(true);
     const sessionLocalId = Crypto.randomUUID();
-    const startedAt = new Date().toISOString();
     try {
+      const status = await useBillingStore.getState().refresh();
+      const remainingMs = await remainingRecordingMs(status);
+      if (status && remainingMs !== null && remainingMs <= 0) {
+        Alert.alert('Όριο καταγραφής', limitReachedMessage(status));
+        return;
+      }
+      const startedAt = new Date().toISOString();
       await recorder.start(
         (chunk) => {
           useRecordingStore.getState().incrementChunkCount();
@@ -96,16 +139,27 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
             })
             .then(() => triggerSync())
             .catch(() => {
-              useRecordingStore.getState().setError('A recorded chunk could not be saved.');
+              useRecordingStore.getState().setError('Ένα τμήμα της καταγραφής δεν αποθηκεύτηκε.');
             });
         },
         (message) => useRecordingStore.getState().setError(message),
+        status && remainingMs !== null
+          ? {
+              maxMs: remainingMs,
+              onLimit: () => {
+                void stopRemoteSession(sessionLocalId, new Date().toISOString());
+                useRecordingStore.getState().markStopped();
+                useRecordingStore.getState().reset();
+                Alert.alert('Όριο καταγραφής', `${limitReachedMessage(status)} Η καταγραφή σταμάτησε και αποθηκεύτηκε.`);
+              },
+            }
+          : undefined,
       );
       useRecordingStore.getState().begin(sessionLocalId, startedAt);
       rootNav.navigate('Recording');
     } catch (e) {
       useRecordingStore.getState().reset();
-      Alert.alert('Recording failed', e instanceof Error ? e.message : 'Please try again.');
+      Alert.alert('Η καταγραφή απέτυχε', e instanceof Error ? e.message : 'Δοκίμασε ξανά.');
     } finally {
       setStarting(false);
     }
@@ -126,137 +180,242 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
     navigation.navigate('Chat', { initialMessage: trimmed });
   };
 
+  const canAsk = question.trim().length > 0;
+  const syncing = syncStatus.pending + (syncStatus.uploading ? 1 : 0);
+
+  const todayLine =
+    todaySeconds === null
+      ? 'Οι μνήμες σου μένουν ιδιωτικές'
+      : todaySeconds === 0
+        ? 'Καμία καταγραφή σήμερα'
+        : `${formatDurationHuman(todaySeconds)} καταγραφής σήμερα`;
+
   return (
-    <Screen>
-      <Text style={[typography.title, { color: theme.colors.text }]}>AI Memory</Text>
-      <Text style={[typography.body, styles.subtitle, { color: theme.colors.textMuted }]}>
-        {user?.email ?? ''}
-      </Text>
-
-      <Card style={styles.statusCard}>
-        <View style={styles.statusRow}>
-          {recording.active ? <RecordingDot size={10} /> : null}
-          <Text style={[typography.heading, { color: theme.colors.text }]}>
-            Recording: {recording.active ? 'ON' : 'OFF'}
-          </Text>
-        </View>
-        {recording.active ? (
-          <Text style={[typography.body, styles.muted, { color: theme.colors.textMuted }]}>
-            {recording.chunkCount} chunk{recording.chunkCount === 1 ? '' : 's'} captured ·{' '}
-            {syncStatus.pending} waiting · {syncStatus.uploading ? 1 : 0} uploading
-          </Text>
-        ) : null}
-        <Text style={[typography.body, styles.muted, { color: theme.colors.textMuted }]}>
-          Today: {todaySeconds === null ? '—' : formatDurationSeconds(todaySeconds)} recorded
+    <Screen padded={false} bottomInset={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={[typography.label, { color: theme.colors.textMuted }]}>{formatLongDate()}</Text>
+        <Text style={[typography.display, styles.greeting, { color: theme.colors.text }]}>
+          {greetingFor()}
         </Text>
-        {recording.error ? (
-          <Text style={[typography.label, { color: theme.colors.danger }]}>{recording.error}</Text>
-        ) : null}
-      </Card>
 
-      <Button
-        title={recording.active ? 'Stop recording' : 'Start recording'}
-        variant={recording.active ? 'danger' : 'primary'}
-        onPress={handlePrimary}
-        loading={starting}
-      />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={recording.active ? 'Άνοιγμα καταγραφής' : 'Έναρξη καταγραφής'}
+          onPress={handlePrimary}
+          disabled={starting}
+          style={({ pressed }) => [
+            styles.recorder,
+            theme.glass,
+            { opacity: pressed ? 0.8 : 1 },
+          ]}
+        >
+          <View
+            style={[
+              styles.micButton,
+              {
+                backgroundColor: recording.active ? theme.colors.recording : theme.colors.primary,
+              },
+            ]}
+          >
+            {starting ? (
+              <ActivityIndicator color={theme.colors.onPrimary} />
+            ) : (
+              <Icon
+                name="mic"
+                size={36}
+                color={recording.active ? '#FFFFFF' : theme.colors.onPrimary}
+              />
+            )}
+          </View>
 
-      <Card>
-        <TextInput
-          style={[styles.askInput, { borderColor: theme.colors.border, color: theme.colors.text }]}
-          placeholder="Ask your memory…"
-          placeholderTextColor={theme.colors.textMuted}
-          value={question}
-          onChangeText={setQuestion}
-          onSubmitEditing={ask}
-          returnKeyType="send"
-        />
-        <Button title="Ask" variant="secondary" compact onPress={ask} disabled={question.trim().length === 0} />
-      </Card>
-
-      <Text style={[typography.heading, styles.sectionTitle, { color: theme.colors.text }]}>
-        Recent sessions
-      </Text>
-      {recentError ? (
-        <EmptyState title="Could not load sessions" message={recentError} />
-      ) : (
-        <FlatList
-          data={recent}
-          keyExtractor={(item) => item.id}
-          style={styles.list}
-          ListEmptyComponent={
-            <EmptyState
-              title="No sessions yet"
-              message="Tap Start recording to capture your first memory."
-            />
-          }
-          renderItem={({ item }) => (
-            <Card>
-              <View style={styles.sessionRow}>
-                <View style={styles.flex}>
-                  <Text style={[typography.label, { color: theme.colors.text }]}>
-                    {formatDayLabel(item.startedAt)} {formatClock(item.startedAt)}
-                  </Text>
-                  <Text style={[typography.body, styles.muted, { color: theme.colors.textMuted }]}>
-                    {formatDurationSeconds(item.durationSeconds)} · {item.chunkCount} chunk
-                    {item.chunkCount === 1 ? '' : 's'}
-                  </Text>
-                </View>
-                <Button
-                  title="View"
-                  variant="ghost"
-                  compact
-                  onPress={() =>
-                    rootNav.navigate('Main', {
-                      screen: 'Timeline',
-                      params: { dayOffset: dayOffsetFor(item.startedAt), sessionId: item.clientId },
-                    })
-                  }
-                />
+          {recording.active ? (
+            <>
+              <Text style={[styles.timer, { color: theme.colors.text }]}>
+                {formatDurationMs(elapsedMs)}
+              </Text>
+              <View style={styles.liveRow}>
+                <RecordingDot size={6} />
+                <Text style={[typography.label, { color: theme.colors.recording }]}>
+                  Γίνεται καταγραφή
+                </Text>
               </View>
-            </Card>
+              <Text style={[typography.caption, styles.recorderNote, { color: theme.colors.textMuted }]}>
+                {recording.chunkCount} τμήματα, {syncing} σε συγχρονισμό. Πάτα για άνοιγμα.
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={[typography.heading, styles.recorderTitle, { color: theme.colors.text }]}>
+                {starting ? 'Εκκίνηση' : 'Πάτα για καταγραφή'}
+              </Text>
+              <Text style={[typography.caption, styles.recorderNote, { color: theme.colors.textMuted }]}>
+                {todayLine}
+              </Text>
+              {billing && remainingLine(billing) ? (
+                <Text style={[typography.caption, styles.recorderNote, { color: theme.colors.textMuted }]}>
+                  {remainingLine(billing)}
+                </Text>
+              ) : null}
+            </>
           )}
-        />
-      )}
+        </Pressable>
+        {recording.error ? (
+          <Text style={[typography.caption, styles.errorLine, { color: theme.colors.danger }]}>
+            {recording.error}
+          </Text>
+        ) : null}
+
+        <View style={[styles.askField, theme.glass]}>
+          <TextInput
+            style={[styles.askInput, { color: theme.colors.text }]}
+            placeholder="Ρώτα τη μνήμη σου"
+            placeholderTextColor={theme.colors.textFaint}
+            value={question}
+            onChangeText={setQuestion}
+            onSubmitEditing={ask}
+            returnKeyType="send"
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Ερώτηση"
+            onPress={ask}
+            disabled={!canAsk}
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.askSend,
+              {
+                backgroundColor: canAsk ? theme.colors.primary : theme.colors.surfaceMuted,
+                opacity: pressed ? 0.7 : 1,
+              },
+            ]}
+          >
+            <Icon
+              name="arrow-up"
+              size={20}
+              color={canAsk ? theme.colors.onPrimary : theme.colors.textFaint}
+            />
+          </Pressable>
+        </View>
+
+        <Text style={[typography.heading, styles.sectionLabel, { color: theme.colors.text }]}>
+          Πρόσφατες καταγραφές
+        </Text>
+        {recentError ? (
+          <EmptyState
+            icon="cloud-off"
+            title="Δεν φορτώθηκαν οι καταγραφές"
+            message={recentError}
+            actionLabel="Δοκίμασε ξανά"
+            onAction={load}
+          />
+        ) : recent.length === 0 ? (
+          <EmptyState
+            icon="mic"
+            title="Καμία καταγραφή ακόμα"
+            message="Πάτα το μικρόφωνο για να καταγράψεις την πρώτη σου μνήμη."
+          />
+        ) : (
+          <ListGroup>
+            {recent.map((item, index) => (
+              <ListRow
+                key={item.id}
+                first={index === 0}
+                icon="mic"
+                title={`${formatDayLabel(item.startedAt)} στις ${formatClock(item.startedAt)}`}
+                subtitle={`${formatDurationHuman(item.durationSeconds)}, ${item.chunkCount} ${
+                  item.chunkCount === 1 ? 'τμήμα' : 'τμήματα'
+                }`}
+                chevron
+                onPress={() =>
+                  rootNav.navigate('Main', {
+                    screen: 'Timeline',
+                    params: { dayOffset: dayOffsetFor(item.startedAt), sessionId: item.clientId },
+                  })
+                }
+              />
+            ))}
+          </ListGroup>
+        )}
+      </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  subtitle: {
-    marginBottom: spacing.md,
+  content: {
+    paddingHorizontal: SCREEN_GUTTER,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xl,
   },
-  statusCard: {
+  greeting: {
+    marginTop: 2,
+    marginBottom: spacing.lg,
+  },
+  recorder: {
+    alignItems: 'center',
+    borderRadius: radius.lg,
+    paddingVertical: spacing.xl,
+    paddingHorizontal: spacing.lg,
+  },
+  micButton: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recorderTitle: {
     marginTop: spacing.md,
   },
-  statusRow: {
+  recorderNote: {
+    marginTop: spacing.xs,
+    textAlign: 'center',
+  },
+  timer: {
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: '700',
+    letterSpacing: -0.8,
+    fontVariant: ['tabular-nums'],
+    marginTop: spacing.md,
+  },
+  liveRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: 2,
   },
-  muted: {
-    marginTop: spacing.xs,
+  errorLine: {
+    marginTop: spacing.sm,
+    textAlign: 'center',
+  },
+  askField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radius.pill,
+    paddingLeft: 20,
+    paddingRight: spacing.sm,
+    minHeight: 54,
+    marginTop: 12,
   },
   askInput: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-    marginBottom: spacing.sm,
+    flex: 1,
     fontSize: 16,
+    paddingVertical: 12,
   },
-  sectionTitle: {
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  list: {
-    flex: 1,
-  },
-  sessionRow: {
-    flexDirection: 'row',
+  askSend: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: spacing.sm,
   },
-  flex: {
-    flex: 1,
+  sectionLabel: {
+    marginTop: spacing.xl,
+    marginBottom: 12,
   },
 });

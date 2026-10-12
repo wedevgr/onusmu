@@ -1,9 +1,10 @@
 import { Pool, type QueryResultRow } from 'pg';
 import { config } from './config';
+import { dbSsl } from './lib/dbssl';
 
 export const pool = new Pool({
   connectionString: config.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: dbSsl(),
   max: 10,
   keepAlive: true,
 });

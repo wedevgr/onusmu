@@ -6,15 +6,24 @@ import { requireAuth } from './auth';
 import { config } from './config';
 import { AppError } from './lib/errors';
 import accountRoutes from './routes/account';
+import billingRoutes from './routes/billing';
 import chatRoutes from './routes/chat';
 import chunkRoutes from './routes/chunks';
 import searchRoutes from './routes/search';
 import sessionRoutes from './routes/sessions';
 import settingsRoutes from './routes/settings';
+import suggestionRoutes from './routes/suggestions';
 import uploadRoutes from './routes/uploads';
 
 export async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: {
+      serializers: {
+        // Query strings can carry user content (e.g. /v1/search?q=...); keep them out of the logs.
+        req: (req) => ({ method: req.method, url: req.url.split('?')[0] }),
+      },
+    },
+  });
 
   await app.register(cors, { origin: true });
   await app.register(multipart, {
@@ -50,7 +59,9 @@ export async function buildApp(): Promise<FastifyInstance> {
       await authed.register(searchRoutes);
       await authed.register(chatRoutes);
       await authed.register(settingsRoutes);
+      await authed.register(suggestionRoutes);
       await authed.register(accountRoutes);
+      await authed.register(billingRoutes);
     },
     { prefix: '/v1' },
   );

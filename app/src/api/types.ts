@@ -67,10 +67,6 @@ export interface ListChunksResponse {
   chunks: Chunk[];
 }
 
-export interface ChunkAudioResponse {
-  url: string;
-}
-
 export interface SearchParams {
   q: string;
   from?: string;
@@ -137,6 +133,22 @@ export interface ChatMessage {
 
 export interface MessagesResponse {
   messages: ChatMessage[];
+}
+
+export interface SuggestionsResponse {
+  suggestions: string[];
+}
+
+export type PlanId = 'free' | 'plus' | 'unlimited';
+
+export interface BillingResponse {
+  plan: PlanId;
+  period: 'day' | 'month';
+  limitSeconds: number | null;
+  usedSeconds: number;
+  remainingSeconds: number | null;
+  periodStart: string;
+  resetsAt: string;
 }
 
 export interface OkResponse {

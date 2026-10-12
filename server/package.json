@@ -11,7 +11,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "db:push": "tsx scripts/apply-migrations.ts"
+    "db:push": "tsx scripts/apply-migrations.ts",
+    "encrypt:existing": "tsx scripts/encrypt-existing.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -14,8 +15,9 @@ import type { RootStackParamList, TabParamList } from '../navigation/RootNavigat
 import { api } from '../api/client';
 import type { SearchResult } from '../api/types';
 import { formatClock, formatDayLabel } from '../lib/time';
-import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
+import { Header } from '../components/Header';
+import { Icon } from '../components/Icon';
 import { Screen } from '../components/Screen';
 import { radius, spacing, typography, useTheme } from '../theme';
 
@@ -64,7 +66,7 @@ export default function SearchScreen(_props: Props): React.JSX.Element {
         .catch((e: unknown) => {
           if (seq !== requestSeq.current) return;
           setResults([]);
-          setError(e instanceof Error ? e.message : 'Search failed.');
+          setError(e instanceof Error ? e.message : 'Η αναζήτηση απέτυχε.');
           setHasSearched(true);
         })
         .finally(() => {
@@ -88,59 +90,85 @@ export default function SearchScreen(_props: Props): React.JSX.Element {
   };
 
   return (
-    <Screen>
-      <TextInput
-        style={[styles.input, { borderColor: theme.colors.border, color: theme.colors.text }]}
-        placeholder="Search your memories…"
-        placeholderTextColor={theme.colors.textMuted}
-        autoCapitalize="none"
-        value={query}
-        onChangeText={setQuery}
-        returnKeyType="search"
-      />
+    <Screen bottomInset={false}>
+      <Header title="Αναζήτηση" />
 
-      {searching ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.colors.primary} />
-        </View>
-      ) : error !== null ? (
-        <EmptyState title="Search failed" message={error} />
-      ) : results.length === 0 ? (
-        <EmptyState
-          title={hasSearched ? 'No matches' : 'Search'}
-          message={
-            hasSearched
-              ? 'Nothing in your memories matches that query.'
-              : 'Type to search across everything you have recorded.'
-          }
+      <View style={[styles.field, theme.glass]}>
+        <Icon name="search" size={20} color={theme.colors.textMuted} />
+        <TextInput
+          style={[styles.input, { color: theme.colors.text }]}
+          placeholder="Αναζήτηση στις μνήμες σου"
+          placeholderTextColor={theme.colors.textFaint}
+          autoCapitalize="none"
+          value={query}
+          onChangeText={setQuery}
+          returnKeyType="search"
         />
+        {searching ? (
+          <ActivityIndicator color={theme.colors.textMuted} />
+        ) : query.length > 0 ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Καθαρισμός"
+            onPress={() => setQuery('')}
+            hitSlop={10}
+          >
+            <Icon name="x-circle" size={20} color={theme.colors.textFaint} />
+          </Pressable>
+        ) : null}
+      </View>
+
+      {error !== null ? (
+        <EmptyState icon="alert-circle" title="Η αναζήτηση απέτυχε" message={error} />
+      ) : results.length === 0 ? (
+        searching ? null : (
+          <EmptyState
+            icon="search"
+            title={hasSearched ? 'Κανένα αποτέλεσμα' : 'Βρες ό,τι έχεις πει'}
+            message={
+              hasSearched
+                ? 'Τίποτα στις μνήμες σου δεν ταιριάζει.'
+                : 'Ψάξε σε όλα όσα έχεις καταγράψει.'
+            }
+          />
+        )
       ) : (
         <FlatList
           data={results}
           keyExtractor={(item) => item.id}
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.listContent}
           ListHeaderComponent={
-            <Text style={[typography.label, styles.count, { color: theme.colors.textMuted }]}>
-              {results.length} result{results.length === 1 ? '' : 's'}
+            <Text style={[typography.caption, styles.count, { color: theme.colors.textMuted }]}>
+              {results.length} {results.length === 1 ? 'αποτέλεσμα' : 'αποτελέσματα'}
             </Text>
           }
           renderItem={({ item }) => (
-            <Card>
-              <Text style={[typography.label, styles.meta, { color: theme.colors.primary }]}>
-                {formatDayLabel(item.startedAt)} · {formatClock(item.startedAt)}
-              </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => openResult(item)}
+              style={({ pressed }) => [
+                styles.result,
+                {
+                  backgroundColor: pressed ? theme.colors.surfaceMuted : theme.colors.surface,
+                },
+              ]}
+            >
               <Text
-                style={[typography.body, styles.snippet, { color: theme.colors.text }]}
+                style={[typography.body, { color: theme.colors.text }]}
                 numberOfLines={4}
               >
                 {item.text}
               </Text>
-              <View style={styles.footer}>
-                <Text style={[typography.caption, { color: theme.colors.textMuted }]}>
-                  Tap to view in timeline
+              <View style={styles.meta}>
+                <Icon name="clock" size={14} color={theme.colors.textMuted} />
+                <Text style={[typography.caption, styles.metaText, { color: theme.colors.textMuted }]}>
+                  {formatDayLabel(item.startedAt)} στις {formatClock(item.startedAt)}
                 </Text>
+                <Icon name="chevron-right" size={16} color={theme.colors.textFaint} />
               </View>
-            </Card>
+            </Pressable>
           )}
         />
       )}
@@ -149,30 +177,39 @@ export default function SearchScreen(_props: Props): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  input: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-    marginTop: spacing.sm,
-    fontSize: 16,
-  },
-  center: {
-    flex: 1,
+  field: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 10,
+    borderRadius: radius.pill,
+    paddingHorizontal: 18,
+    minHeight: 52,
+  },
+  input: {
+    flex: 1,
+    fontSize: 16,
+    paddingVertical: 12,
+  },
+  listContent: {
+    paddingBottom: spacing.xl,
   },
   count: {
-    marginTop: spacing.sm,
-    marginBottom: spacing.xs,
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+    marginLeft: spacing.xs,
+  },
+  result: {
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
   },
   meta: {
-    marginBottom: spacing.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
   },
-  snippet: {
-    lineHeight: 22,
-  },
-  footer: {
-    marginTop: spacing.sm,
+  metaText: {
+    flex: 1,
   },
 });
