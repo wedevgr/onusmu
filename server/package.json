@@ -4,7 +4,7 @@
   "private": true,
   "description": "AI Memory backend: uploads, STT pipeline, embeddings, hybrid search, RAG chat.",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
