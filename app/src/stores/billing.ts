@@ -30,7 +30,9 @@ export const useBillingStore = create<BillingState & BillingActions>((set, get) 
 
 export const PLAN_NAMES: Record<PlanId, string> = {
   free: 'Δωρεάν',
+  starter: 'Starter',
   plus: 'Plus',
+  pro: 'Pro',
   unlimited: 'Unlimited',
 };
 

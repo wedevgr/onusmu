@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -27,10 +27,12 @@ import {
   useBillingStore,
 } from '../stores/billing';
 import { useRecordingStore } from '../stores/recording';
+import { selectOpen, selectSuggested, useRemindersStore } from '../stores/reminders';
 import { useSyncStore, selectSyncStatus } from '../stores/sync';
 import {
   formatClock,
   formatDayLabel,
+  formatDueLabel,
   formatDurationHuman,
   formatDurationMs,
   formatLongDate,
@@ -60,9 +62,14 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
   const recording = useRecordingStore();
   const syncStatus = useSyncStore(useShallow(selectSyncStatus));
   const billing = useBillingStore((state) => state.status);
+  const suggestedReminders = useRemindersStore(useShallow(selectSuggested));
+  const openReminders = useRemindersStore(useShallow(selectOpen));
 
   const [starting, setStarting] = useState(false);
   const [question, setQuestion] = useState('');
+  const scrollRef = useRef<ScrollView>(null);
+  const askFieldY = useRef(0);
+  const askFocused = useRef(false);
   const [todaySeconds, setTodaySeconds] = useState<number | null>(null);
   const [recent, setRecent] = useState<SessionSummary[]>([]);
   const [recentError, setRecentError] = useState<string | null>(null);
@@ -80,6 +87,7 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
 
   const load = useCallback(() => {
     void useBillingStore.getState().refresh();
+    void useRemindersStore.getState().refresh();
     api
       .listSessions({ from: startOfTodayIso() })
       .then((response) => {
@@ -193,7 +201,14 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
   return (
     <Screen padded={false} bottomInset={false}>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={styles.content}
+        // The view shrinks when the keyboard opens; bring the ask field up above it.
+        onLayout={() => {
+          if (askFocused.current) {
+            scrollRef.current?.scrollTo({ y: askFieldY.current - spacing.md, animated: true });
+          }
+        }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -269,7 +284,12 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
           </Text>
         ) : null}
 
-        <View style={[styles.askField, theme.glass]}>
+        <View
+          style={[styles.askField, theme.glass]}
+          onLayout={(event) => {
+            askFieldY.current = event.nativeEvent.layout.y;
+          }}
+        >
           <TextInput
             style={[styles.askInput, { color: theme.colors.text }]}
             placeholder="Ρώτα τη μνήμη σου"
@@ -277,6 +297,12 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
             value={question}
             onChangeText={setQuestion}
             onSubmitEditing={ask}
+            onFocus={() => {
+              askFocused.current = true;
+            }}
+            onBlur={() => {
+              askFocused.current = false;
+            }}
             returnKeyType="send"
           />
           <Pressable
@@ -300,6 +326,46 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
             />
           </Pressable>
         </View>
+
+        <Text style={[typography.heading, styles.sectionLabel, { color: theme.colors.text }]}>
+          Υπενθυμίσεις
+        </Text>
+        <ListGroup>
+          {suggestedReminders.length > 0 ? (
+            <ListRow
+              first
+              icon="mic"
+              title={
+                suggestedReminders.length === 1
+                  ? '1 νέα πρόταση από τις καταγραφές σου'
+                  : `${suggestedReminders.length} νέες προτάσεις από τις καταγραφές σου`
+              }
+              chevron
+              onPress={() => rootNav.navigate('Reminders')}
+            />
+          ) : null}
+          {openReminders.slice(0, 3).map((reminder, index) => (
+            <ListRow
+              key={reminder.id}
+              first={index === 0 && suggestedReminders.length === 0}
+              icon="bell"
+              title={reminder.text}
+              subtitle={reminder.dueAt ? formatDueLabel(reminder.dueAt) : undefined}
+              onPress={() => rootNav.navigate('Reminders')}
+            />
+          ))}
+          <ListRow
+            first={suggestedReminders.length === 0 && openReminders.length === 0}
+            icon={openReminders.length > 3 ? 'list' : 'plus'}
+            title={
+              openReminders.length > 3
+                ? `Όλες οι υπενθυμίσεις (${openReminders.length})`
+                : 'Νέα υπενθύμιση'
+            }
+            chevron
+            onPress={() => rootNav.navigate('Reminders')}
+          />
+        </ListGroup>
 
         <Text style={[typography.heading, styles.sectionLabel, { color: theme.colors.text }]}>
           Πρόσφατες καταγραφές

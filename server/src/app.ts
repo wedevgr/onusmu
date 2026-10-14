@@ -9,8 +9,10 @@ import accountRoutes from './routes/account';
 import billingRoutes from './routes/billing';
 import chatRoutes from './routes/chat';
 import chunkRoutes from './routes/chunks';
+import reminderRoutes from './routes/reminders';
 import searchRoutes from './routes/search';
 import sessionRoutes from './routes/sessions';
+import stripeWebhookRoutes from './routes/stripeWebhook';
 import settingsRoutes from './routes/settings';
 import suggestionRoutes from './routes/suggestions';
 import uploadRoutes from './routes/uploads';
@@ -49,6 +51,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   app.get('/healthz', async () => ({ ok: true }));
+  await app.register(stripeWebhookRoutes);
 
   await app.register(
     async (authed) => {
@@ -62,6 +65,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await authed.register(suggestionRoutes);
       await authed.register(accountRoutes);
       await authed.register(billingRoutes);
+      await authed.register(reminderRoutes);
     },
     { prefix: '/v1' },
   );

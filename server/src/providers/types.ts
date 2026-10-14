@@ -12,5 +12,6 @@ export interface ChatMessage {
 }
 
 export interface LlmProvider {
-  chat(messages: ChatMessage[], opts?: { temperature?: number }): Promise<string>;
+  /** json: the reply must be a single JSON object. */
+  chat(messages: ChatMessage[], opts?: { temperature?: number; json?: boolean }): Promise<string>;
 }

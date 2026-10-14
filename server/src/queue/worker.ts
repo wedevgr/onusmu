@@ -1,5 +1,6 @@
 import { query, queryOne } from '../db';
 import { ctx, encryptText } from '../lib/crypto';
+import { suggestRemindersFromChunk } from '../lib/reminders';
 import { downloadAudio, removeAudio } from '../lib/storage';
 import { getEmbeddingProvider, getSttProvider } from '../providers';
 import type { AudioJob } from './jobs';
@@ -8,6 +9,8 @@ import { completeJob, failJob } from './jobs';
 interface ChunkRow {
   id: string;
   user_id: string;
+  session_id: string;
+  started_at: Date;
   audio_path: string | null;
   processing_status: string;
 }
@@ -20,7 +23,8 @@ interface ChunkRow {
  */
 export async function processChunkJob(job: AudioJob): Promise<void> {
   const chunk = await queryOne<ChunkRow>(
-    `SELECT id, user_id, audio_path, processing_status FROM transcript_chunks WHERE id = $1`,
+    `SELECT id, user_id, session_id, started_at, audio_path, processing_status
+     FROM transcript_chunks WHERE id = $1`,
     [job.chunk_id],
   );
   if (!chunk) throw new Error(`Chunk ${job.chunk_id} not found`);
@@ -59,6 +63,13 @@ export async function processChunkJob(job: AudioJob): Promise<void> {
     `UPDATE transcript_chunks SET embedding = $2::vector, processing_status = 'completed' WHERE id = $1`,
     [chunk.id, vector],
   );
+
+  // Suggestions are extra: a failure here must not retry (and re-bill) the transcription.
+  try {
+    await suggestRemindersFromChunk(chunk, text);
+  } catch (err) {
+    console.error('[reminders] suggestion failed for chunk', chunk.id, err instanceof Error ? err.message : err);
+  }
 
   await maybeDeleteAudio(chunk);
   await completeJob(job.id);

@@ -1,9 +1,11 @@
 import React from 'react';
 import {
   Keyboard,
+  LayoutAnimation,
   Platform,
   StyleSheet,
   View,
+  type KeyboardEvent,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
@@ -66,30 +68,67 @@ export function Screen({
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const insideTabs = React.useContext(BottomTabBarHeightContext) !== undefined;
-  const [keyboardOpen, setKeyboardOpen] = React.useState(false);
+  const rootRef = React.useRef<View>(null);
+  // How far the keyboard reaches over this screen; null while the keyboard is closed.
+  const [keyboardInset, setKeyboardInset] = React.useState<number | null>(null);
 
-  // Android resizes the window for the keyboard and the tab bar hides, so the room
-  // reserved for the bar would otherwise sit as a gap above the keyboard.
+  // Android draws edge to edge, so the window no longer shrinks for the keyboard and the
+  // screen has to make room itself. Measuring the overlap rather than taking the keyboard
+  // height keeps this right on a device that does still resize the window.
   React.useEffect(() => {
-    if (Platform.OS !== 'android' || !insideTabs) return;
-    const shown = Keyboard.addListener('keyboardDidShow', () => setKeyboardOpen(true));
-    const hidden = Keyboard.addListener('keyboardDidHide', () => setKeyboardOpen(false));
-    return () => {
-      shown.remove();
-      hidden.remove();
+    // Measuring is asynchronous, so a late result must not reopen a keyboard that has closed.
+    let visible = false;
+    const onShow = (event: KeyboardEvent): void => {
+      visible = true;
+      const keyboardTop = event.endCoordinates.screenY;
+      rootRef.current?.measureInWindow((_x, y, _width, height) => {
+        if (!visible) return;
+        if (Platform.OS === 'ios' && event.duration > 0) {
+          LayoutAnimation.configureNext({
+            duration: event.duration,
+            update: { type: LayoutAnimation.Types.keyboard },
+          });
+        }
+        setKeyboardInset(Math.max(0, y + height - keyboardTop));
+      });
     };
-  }, [insideTabs]);
+    const onHide = (event: KeyboardEvent): void => {
+      visible = false;
+      if (Platform.OS === 'ios' && event.duration > 0) {
+        LayoutAnimation.configureNext({
+          duration: event.duration,
+          update: { type: LayoutAnimation.Types.keyboard },
+        });
+      }
+      setKeyboardInset(null);
+    };
+    // iOS sends another will-show whenever the keyboard changes height.
+    const subscriptions =
+      Platform.OS === 'ios'
+        ? [
+            Keyboard.addListener('keyboardWillShow', onShow),
+            Keyboard.addListener('keyboardWillHide', onHide),
+          ]
+        : [
+            Keyboard.addListener('keyboardDidShow', onShow),
+            Keyboard.addListener('keyboardDidHide', onHide),
+          ];
+    return () => subscriptions.forEach((subscription) => subscription.remove());
+  }, []);
 
-  const paddingBottom = insideTabs
-    ? keyboardOpen
-      ? spacing.sm
-      : Math.max(insets.bottom, tabBar.gap) + tabBar.height + spacing.sm
-    : bottomInset
-      ? insets.bottom
-      : 0;
+  // With the keyboard up the tab bar is hidden or covered, so only the keyboard needs room.
+  const paddingBottom =
+    keyboardInset !== null
+      ? keyboardInset + spacing.sm
+      : insideTabs
+        ? Math.max(insets.bottom, tabBar.gap) + tabBar.height + spacing.sm
+        : bottomInset
+          ? insets.bottom
+          : 0;
 
   return (
     <View
+      ref={rootRef}
       style={[
         styles.base,
         {

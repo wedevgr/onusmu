@@ -43,9 +43,11 @@ export function IconButton({
   );
 }
 
-// The app mark: the brand logo on a solid rounded tile.
+// The emblem's own backdrop, shown while the image loads.
+const LOGO_BACKGROUND = '#013535';
+
+// The app mark: the chrome emblem on its teal tile, as on the app icon.
 export function Logo({ size = 64 }: { size?: number }): React.JSX.Element {
-  const theme = useTheme();
   return (
     <View
       style={[
@@ -54,15 +56,10 @@ export function Logo({ size = 64 }: { size?: number }): React.JSX.Element {
           width: size,
           height: size,
           borderRadius: size * 0.28,
-          backgroundColor: theme.colors.primary,
         },
       ]}
     >
-      <Image
-        source={require('../../assets/logo.png')}
-        style={{ width: size * 0.72, height: size * 0.72 }}
-        resizeMode="contain"
-      />
+      <Image source={require('../../assets/logo.png')} style={{ width: size, height: size }} />
     </View>
   );
 }
@@ -76,7 +73,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logo: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    overflow: 'hidden',
+    backgroundColor: LOGO_BACKGROUND,
   },
 });

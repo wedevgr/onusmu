@@ -100,3 +100,13 @@ export function greetingFor(date: Date = new Date()): string {
   if (hour < 12) return 'Καλημέρα';
   return 'Καλησπέρα';
 }
+
+/** "Σήμερα 17:00", "Αύριο 09:00", or a short date and time further out. */
+export function formatDueLabel(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const day = isSameDay(date, tomorrow) ? 'Αύριο' : formatDayLabel(iso);
+  return `${day} ${formatClock(iso)}`;
+}

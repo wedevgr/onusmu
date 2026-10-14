@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { api } from '../api/client';
 import type { SessionSummary } from '../api/types';
+import { ensureNotificationPermission } from '../lib/notifications';
 import * as outbox from '../lib/outbox';
 import { triggerSync } from '../lib/sync';
 import { useAuthStore } from '../stores/auth';
@@ -23,6 +24,8 @@ export default function SettingsScreen(): React.JSX.Element {
   const syncStatus = useSyncStore(useShallow(selectSyncStatus));
   const keepAudio = useSettingsStore((state) => state.keepAudio);
   const setKeepAudio = useSettingsStore((state) => state.setKeepAudio);
+  const autoReminders = useSettingsStore((state) => state.autoReminders);
+  const setAutoReminders = useSettingsStore((state) => state.setAutoReminders);
   const setLoaded = useSettingsStore((state) => state.setLoaded);
   const billing = useBillingStore((state) => state.status);
 
@@ -50,15 +53,26 @@ export default function SettingsScreen(): React.JSX.Element {
       .getSettings()
       .then((response) => {
         setKeepAudio(response.keepAudio);
+        setAutoReminders(response.autoReminders);
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
-  }, [loadSessions, setKeepAudio, setLoaded]);
+  }, [loadSessions, setKeepAudio, setAutoReminders, setLoaded]);
 
   const toggleKeepAudio = (value: boolean): void => {
     setKeepAudio(value);
-    api.updateSettings(value).catch(() => {
+    api.updateSettings({ keepAudio: value }).catch(() => {
       setKeepAudio(!value);
+      Alert.alert('Δεν αποθηκεύτηκε', 'Η ρύθμιση δεν ενημερώθηκε. Δοκίμασε ξανά.');
+    });
+  };
+
+  const toggleAutoReminders = (value: boolean): void => {
+    setAutoReminders(value);
+    // Reminders will now arrive without a tap from the user, so ask for notifications up front.
+    if (value) void ensureNotificationPermission().catch(() => false);
+    api.updateSettings({ autoReminders: value }).catch(() => {
+      setAutoReminders(!value);
       Alert.alert('Δεν αποθηκεύτηκε', 'Η ρύθμιση δεν ενημερώθηκε. Δοκίμασε ξανά.');
     });
   };
@@ -223,6 +237,29 @@ export default function SettingsScreen(): React.JSX.Element {
             title="Συγχρονισμός"
             subtitle={syncSummary}
             right={<View style={[styles.syncDot, { backgroundColor: syncColor }]} />}
+          />
+        </ListGroup>
+
+        <Text style={sectionLabel}>Υπενθυμίσεις</Text>
+        <ListGroup>
+          <ListRow
+            first
+            icon="bell"
+            title="Αυτόματες υπενθυμίσεις"
+            subtitle={
+              autoReminders
+                ? 'Ό,τι λες ότι πρέπει να κάνεις γίνεται υπενθύμιση αμέσως.'
+                : 'Ό,τι λες ότι πρέπει να κάνεις εμφανίζεται ως πρόταση για επιβεβαίωση.'
+            }
+            right={
+              <Switch
+                value={autoReminders}
+                onValueChange={toggleAutoReminders}
+                trackColor={{ false: theme.colors.surfaceMuted, true: theme.colors.success }}
+                thumbColor="#FFFFFF"
+                ios_backgroundColor={theme.colors.surfaceMuted}
+              />
+            }
           />
         </ListGroup>
 

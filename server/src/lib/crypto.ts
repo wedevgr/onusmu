@@ -93,6 +93,8 @@ export const ctx = {
     `message.content|${userId}|${messageId}`,
   messageCitation: (userId: string, messageId: string): EncryptionContext =>
     `message.citation|${userId}|${messageId}`,
+  reminderText: (userId: string, reminderId: string): EncryptionContext =>
+    `reminder.text|${userId}|${reminderId}`,
   /** Storage paths are '<user_id>/<chunk_id>.m4a', so the path identifies owner and chunk. */
   audio: (path: string): EncryptionContext => `audio|${path}`,
 };

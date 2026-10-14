@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const STORAGE_KEY = 'aimemory.outbox.v1';
 const OUTBOX_DIR = `${FileSystem.documentDirectory ?? ''}outbox/`;

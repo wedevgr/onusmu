@@ -14,4 +14,5 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
     return;
   }
   request.userId = data.user.id;
+  request.userEmail = data.user.email ?? null;
 }

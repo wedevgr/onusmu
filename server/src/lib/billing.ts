@@ -2,7 +2,8 @@ import { config } from '../config';
 import { query, queryOne } from '../db';
 import { AppError } from './errors';
 
-export type PlanId = 'free' | 'plus' | 'unlimited';
+export type PlanId = 'free' | 'starter' | 'plus' | 'pro' | 'unlimited';
+export type PaidPlanId = Exclude<PlanId, 'free'>;
 export type UsagePeriod = 'day' | 'month';
 
 interface Plan {
@@ -10,15 +11,19 @@ interface Plan {
   limitSeconds: number | null; // null = no limit
 }
 
-// Recording allowances. Prices live in the stores / payment provider, not here.
+// Recording allowances. Prices (€3 / €5 / €10 / €20 a month) live in Stripe, not here.
 export const PLANS: Record<PlanId, Plan> = {
-  free: { period: 'day', limitSeconds: 10 * 60 },
-  plus: { period: 'day', limitSeconds: 10 * 60 * 60 },
+  free: { period: 'day', limitSeconds: 5 * 60 },
+  starter: { period: 'day', limitSeconds: 30 * 60 },
+  plus: { period: 'day', limitSeconds: 5 * 60 * 60 },
+  pro: { period: 'day', limitSeconds: 10 * 60 * 60 },
   unlimited: { period: 'month', limitSeconds: null },
 };
 
 export interface BillingStatus {
   plan: PlanId;
+  // Where the paid plan was bought ('stripe', 'app_store', ...); null on the free plan.
+  provider: string | null;
   period: UsagePeriod;
   limitSeconds: number | null;
   usedSeconds: number;
@@ -39,17 +44,19 @@ export function usageInstant(startedAt: Date, now: Date = new Date()): Date {
   return age < 0 || age > BACKDATE_WINDOW_MS ? now : startedAt;
 }
 
-async function getPlanId(userId: string): Promise<PlanId> {
-  const row = await queryOne<{ plan: string }>(
-    `SELECT plan FROM subscriptions
+async function getActivePlan(userId: string): Promise<{ plan: PlanId; provider: string | null }> {
+  const row = await queryOne<{ plan: string; provider: string }>(
+    `SELECT plan, provider FROM subscriptions
      WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > now())`,
     [userId],
   );
-  return row && row.plan in PLANS ? (row.plan as PlanId) : 'free';
+  return row && row.plan in PLANS
+    ? { plan: row.plan as PlanId, provider: row.provider }
+    : { plan: 'free', provider: null };
 }
 
 export async function getBillingStatus(userId: string, at: Date = new Date()): Promise<BillingStatus> {
-  const planId = await getPlanId(userId);
+  const { plan: planId, provider } = await getActivePlan(userId);
   const plan = PLANS[planId];
   // Period bounds are computed in the billing timezone so "a day" resets at local midnight.
   const row = await queryOne<{ used: number; periodStart: Date; resetsAt: Date }>(
@@ -70,6 +77,7 @@ export async function getBillingStatus(userId: string, at: Date = new Date()): P
   if (!row) throw new Error('Failed to compute usage');
   return {
     plan: planId,
+    provider,
     period: plan.period,
     limitSeconds: plan.limitSeconds,
     usedSeconds: row.used,

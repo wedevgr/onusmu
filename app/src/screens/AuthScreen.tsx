@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 import {
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { supabase } from '../supabase';
+import { signInWithGoogle } from '../lib/googleSignIn';
 import { isSupabaseConfigured } from '../config';
 import { Button } from '../components/Button';
 import { Icon, Logo } from '../components/Icon';
@@ -80,9 +80,10 @@ export default function AuthScreen(): React.JSX.Element {
 
   return (
     <Screen>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      <ScrollView
+        contentContainerStyle={styles.flex}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
         <View style={styles.hero}>
           <Logo size={64} />
@@ -159,6 +160,17 @@ export default function AuthScreen(): React.JSX.Element {
             loading={busy}
             disabled={email.length === 0 || password.length === 0}
           />
+          <View style={styles.orRow}>
+            <View style={[styles.orLine, { backgroundColor: theme.colors.border }]} />
+            <Text style={[typography.caption, { color: theme.colors.textFaint }]}>ή</Text>
+            <View style={[styles.orLine, { backgroundColor: theme.colors.border }]} />
+          </View>
+          <Button
+            title="Συνέχεια με Google"
+            variant="secondary"
+            onPress={() => void run(signInWithGoogle)}
+            disabled={busy}
+          />
         </View>
 
         {forgotOpen ? (
@@ -186,14 +198,14 @@ export default function AuthScreen(): React.JSX.Element {
             </Text>
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   flex: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: 'center',
   },
   hero: {
@@ -239,6 +251,16 @@ const styles = StyleSheet.create({
   },
   submit: {
     marginTop: spacing.sm,
+  },
+  orRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginVertical: spacing.xs,
+  },
+  orLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
   },
   forgotBox: {
     marginTop: spacing.md,

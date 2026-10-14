@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import {
   DarkTheme,
   DefaultTheme,
   NavigationContainer,
+  createNavigationContainerRef,
   type NavigatorScreenParams,
   type Theme as NavigationTheme,
 } from '@react-navigation/native';
@@ -21,6 +23,7 @@ import TimelineScreen from '../screens/TimelineScreen';
 import SearchScreen from '../screens/SearchScreen';
 import ChatScreen from '../screens/ChatScreen';
 import ChatHistoryScreen from '../screens/ChatHistoryScreen';
+import RemindersScreen from '../screens/RemindersScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import { GlassTabBar } from '../components/GlassTabBar';
 import { Screen } from '../components/Screen';
@@ -50,11 +53,13 @@ export type RootStackParamList = {
   Main: NavigatorScreenParams<TabParamList>;
   Recording: undefined;
   ChatHistory: undefined;
+  Reminders: undefined;
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+const navigationRef = createNavigationContainerRef<RootStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
 
 function tabIcon(name: IconName) {
@@ -118,15 +123,31 @@ export default function RootNavigator(): React.JSX.Element {
   const theme = useTheme();
   const session = useAuthStore((state) => state.session);
   const initialized = useAuthStore((state) => state.initialized);
+  const [navReady, setNavReady] = useState(false);
+
+  // Tapping a reminder notification, including one that launched the app, opens Reminders.
+  const notificationResponse = Notifications.useLastNotificationResponse();
+  const [handledNotification, setHandledNotification] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notificationResponse || !navReady || session === null) return;
+    const id = notificationResponse.notification.request.identifier;
+    if (id === handledNotification) return;
+    setHandledNotification(id);
+    if (navigationRef.isReady()) navigationRef.navigate('Reminders');
+  }, [notificationResponse, navReady, session, handledNotification]);
 
   return (
-    <NavigationContainer theme={buildNavigationTheme(theme.dark)}>
+    <NavigationContainer
+      ref={navigationRef}
+      onReady={() => setNavReady(true)}
+      theme={buildNavigationTheme(theme.dark)}
+    >
       {!initialized ? (
         <Screen>
           <View style={styles.splash}>
             <Logo size={72} />
             <Text style={[typography.heading, styles.splashTitle, { color: theme.colors.text }]}>
-              AI Memory
+              onusmu
             </Text>
             <ActivityIndicator color={theme.colors.textMuted} />
           </View>
@@ -146,6 +167,11 @@ export default function RootNavigator(): React.JSX.Element {
               <Stack.Screen
                 name="ChatHistory"
                 component={ChatHistoryScreen}
+                options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
+              />
+              <Stack.Screen
+                name="Reminders"
+                component={RemindersScreen}
                 options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
               />
             </>

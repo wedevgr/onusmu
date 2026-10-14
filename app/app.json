@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "AI Memory",
+    "name": "onusmu",
     "slug": "ai-memory",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -10,10 +10,10 @@
     "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.aimemory.app",
+      "bundleIdentifier": "com.onusmu.app",
       "icon": "./assets/icon.png",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "AI Memory records audio only while you have started a recording.",
+        "NSMicrophoneUsageDescription": "onusmu records audio only while you have started a recording.",
         "UIBackgroundModes": [
           "audio",
           "audio"
@@ -22,10 +22,10 @@
       }
     },
     "android": {
-      "package": "com.aimemory.app",
+      "package": "com.onusmu.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#FFFFFF"
+        "backgroundColor": "#013535"
       },
       "permissions": [
         "RECORD_AUDIO",
@@ -41,7 +41,7 @@
       [
         "expo-av",
         {
-          "microphonePermission": "AI Memory records audio only while you have started a recording."
+          "microphonePermission": "onusmu records audio only while you have started a recording."
         }
       ],
       "expo-asset",
@@ -50,9 +50,9 @@
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",
-          "imageWidth": 200,
+          "imageWidth": 220,
           "resizeMode": "contain",
-          "backgroundColor": "#07080A"
+          "backgroundColor": "#013535"
         }
       ],
       [
@@ -63,7 +63,16 @@
           }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "@react-native-community/datetimepicker",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#013535"
+        }
+      ],
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {

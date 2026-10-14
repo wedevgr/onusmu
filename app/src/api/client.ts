@@ -6,6 +6,7 @@ import type {
   ChatResponse,
   Conversation,
   ConversationsResponse,
+  CreateReminderRequest,
   CreateSessionRequest,
   CreateSessionResponse,
   HealthResponse,
@@ -13,12 +14,15 @@ import type {
   ListSessionsResponse,
   MessagesResponse,
   OkResponse,
+  Reminder,
+  RemindersResponse,
   SearchParams,
   SearchResponse,
   SettingsResponse,
   SuggestionsResponse,
   StopSessionRequest,
   StopSessionResponse,
+  UpdateReminderRequest,
   UploadChunkRequest,
   UploadResponse,
 } from './types';
@@ -33,7 +37,7 @@ export class ApiError extends Error {
   }
 }
 
-type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 interface RequestOptions {
   method: Method;
@@ -163,8 +167,22 @@ export const api = {
 
   getSettings: (): Promise<SettingsResponse> => request('/v1/settings', { method: 'GET' }),
 
-  updateSettings: (keepAudio: boolean): Promise<SettingsResponse> =>
-    request('/v1/settings', { method: 'PUT', body: { keepAudio } }),
+  updateSettings: (patch: Partial<SettingsResponse>): Promise<SettingsResponse> =>
+    request('/v1/settings', { method: 'PUT', body: patch }),
+
+  updateTimezone: (timezone: string): Promise<OkResponse> =>
+    request('/v1/settings/timezone', { method: 'PUT', body: { timezone } }),
+
+  listReminders: (): Promise<RemindersResponse> => request('/v1/reminders', { method: 'GET' }),
+
+  createReminder: (body: CreateReminderRequest): Promise<Reminder> =>
+    request('/v1/reminders', { method: 'POST', body }),
+
+  updateReminder: (id: string, body: UpdateReminderRequest): Promise<Reminder> =>
+    request(`/v1/reminders/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
+
+  deleteReminder: (id: string): Promise<OkResponse> =>
+    request(`/v1/reminders/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   sendChat: (body: ChatRequest): Promise<ChatResponse> =>
     request('/v1/chat', { method: 'POST', body }),

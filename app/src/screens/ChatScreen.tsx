@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FlatList,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -200,11 +198,7 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
 
   return (
     <Screen padded={false} bottomInset={false}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={90}
-      >
+      <View style={styles.flex}>
         <View style={styles.header}>
           <Header
             title="Συνομιλία"
@@ -255,6 +249,8 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
             onContentSizeChange={() =>
               listRef.current?.scrollToEnd({ animated: true })
             }
+            // The list shrinks when the keyboard opens; keep the latest message in view.
+            onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
             ListFooterComponent={
               sending ? (
                 <View style={styles.answer}>
@@ -334,7 +330,7 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
             </Pressable>
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </Screen>
   );
 }

@@ -89,6 +89,8 @@ export interface SearchResponse {
 
 export interface SettingsResponse {
   keepAudio: boolean;
+  // Reminders found in recordings are created directly instead of waiting for confirmation.
+  autoReminders: boolean;
 }
 
 export interface Citation {
@@ -139,7 +141,7 @@ export interface SuggestionsResponse {
   suggestions: string[];
 }
 
-export type PlanId = 'free' | 'plus' | 'unlimited';
+export type PlanId = 'free' | 'starter' | 'plus' | 'pro' | 'unlimited';
 
 export interface BillingResponse {
   plan: PlanId;
@@ -153,4 +155,31 @@ export interface BillingResponse {
 
 export interface OkResponse {
   ok: boolean;
+}
+
+export type ReminderStatus = 'suggested' | 'pending' | 'done' | 'dismissed';
+
+export interface Reminder {
+  id: string;
+  text: string;
+  dueAt: string | null;
+  status: ReminderStatus;
+  // Set when the server suggested this reminder from a recording.
+  sourceChunkId: string | null;
+  createdAt: string;
+}
+
+export interface RemindersResponse {
+  reminders: Reminder[];
+}
+
+export interface CreateReminderRequest {
+  text: string;
+  dueAt: string | null;
+}
+
+export interface UpdateReminderRequest {
+  text?: string;
+  dueAt?: string | null;
+  status?: Exclude<ReminderStatus, 'suggested'>;
 }
