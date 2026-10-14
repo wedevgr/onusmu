@@ -35,8 +35,10 @@ export default async function billingRoutes(app: FastifyInstance): Promise<void>
     const { plan } = checkoutSchema.parse(request.body);
     const price = priceForPlan(plan);
 
+    // A plan bought in an app store can only be changed there. A plan granted by hand
+    // ('manual') is simply replaced by the Stripe subscription once it starts.
     const status = await getBillingStatus(request.userId);
-    if (status.provider && status.provider !== 'stripe') {
+    if (status.provider === 'app_store' || status.provider === 'play_store') {
       throw new AppError(409, 'Your plan was bought in the app store; change it there');
     }
 
