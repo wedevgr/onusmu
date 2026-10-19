@@ -14,7 +14,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useShallow } from 'zustand/react/shallow';
 import type { RootStackParamList } from '../navigation/RootNavigator';
-import type { Reminder, UpdateReminderRequest } from '../api/types';
+import type { Reminder, RepeatFrequency, UpdateReminderRequest } from '../api/types';
 import { formatDueLabel } from '../lib/time';
 import { EmptyState } from '../components/EmptyState';
 import { Header } from '../components/Header';
@@ -48,6 +48,13 @@ function presets(): Preset[] {
   return list;
 }
 
+const REPEATS: { freq: RepeatFrequency | null; label: string }[] = [
+  { freq: null, label: 'Χωρίς επανάληψη' },
+  { freq: 'daily', label: 'Κάθε μέρα' },
+  { freq: 'weekly', label: 'Κάθε εβδομάδα' },
+  { freq: 'monthly', label: 'Κάθε μήνα' },
+];
+
 function failed(title: string) {
   return (e: unknown): void => {
     Alert.alert(title, e instanceof Error ? e.message : 'Δοκίμασε ξανά.');
@@ -66,6 +73,7 @@ export default function RemindersScreen(): React.JSX.Element {
   const [text, setText] = useState('');
   const [due, setDue] = useState<Date | null>(null);
   const [presetLabel, setPresetLabel] = useState('Χωρίς ώρα');
+  const [repeatFreq, setRepeatFreq] = useState<RepeatFrequency | null>(null);
   const [iosPickerOpen, setIosPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -117,14 +125,17 @@ export default function RemindersScreen(): React.JSX.Element {
       Alert.alert('Η ώρα έχει περάσει', 'Διάλεξε μια ώρα στο μέλλον.');
       return;
     }
+    // A repeating reminder needs a time to repeat at; without one it starts tomorrow at 09:00.
+    const when = repeatFreq && !due ? at(1, 9) : due;
     setSaving(true);
     useRemindersStore
       .getState()
-      .create(trimmed, due ? due.toISOString() : null)
+      .create(trimmed, when ? when.toISOString() : null, repeatFreq ? { freq: repeatFreq } : null)
       .then(() => {
         setText('');
         setDue(null);
         setPresetLabel('Χωρίς ώρα');
+        setRepeatFreq(null);
         setIosPickerOpen(false);
       })
       .catch(failed('Δεν αποθηκεύτηκε'))
@@ -151,7 +162,31 @@ export default function RemindersScreen(): React.JSX.Element {
   const canAdd = !saving && text.trim().length > 0;
   const nothingYet = loaded && suggested.length === 0 && open.length === 0 && done.length === 0;
 
+  const stopRepeating = (reminder: Reminder): void => {
+    Alert.alert('Σταμάτημα επανάληψης;', `${reminder.text}\n${reminder.repeatLabel ?? ''}`, [
+      { text: 'Άκυρο', style: 'cancel' },
+      { text: 'Σταμάτα', onPress: () => update(reminder.id, { repeat: null }) },
+    ]);
+  };
+
   const dueText = (reminder: Reminder): React.JSX.Element | null => {
+    if (reminder.repeat && reminder.repeatLabel) {
+      return (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityHint="Σταμάτημα επανάληψης"
+          onPress={() => stopRepeating(reminder)}
+          hitSlop={6}
+          style={styles.repeatRow}
+        >
+          <Icon name="repeat" size={12} color={theme.colors.textMuted} />
+          <Text style={[typography.caption, { color: theme.colors.textMuted }]}>
+            {reminder.repeatLabel}
+            {reminder.dueAt && reminder.status === 'pending' ? ` · επόμενη ${formatDueLabel(reminder.dueAt)}` : ''}
+          </Text>
+        </Pressable>
+      );
+    }
     if (!reminder.dueAt) return null;
     const overdue = reminder.status === 'pending' && new Date(reminder.dueAt).getTime() < Date.now();
     return (
@@ -212,6 +247,22 @@ export default function RemindersScreen(): React.JSX.Element {
               selected={presetLabel === 'custom'}
               onPress={chooseCustom}
             />
+          </ScrollView>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.chips}
+          >
+            {REPEATS.map((option) => (
+              <Chip
+                key={option.label}
+                label={option.label}
+                icon={option.freq ? 'repeat' : undefined}
+                selected={repeatFreq === option.freq}
+                onPress={() => setRepeatFreq(option.freq)}
+              />
+            ))}
           </ScrollView>
           {Platform.OS === 'ios' && iosPickerOpen && due ? (
             <DateTimePicker
@@ -375,7 +426,7 @@ function Chip({
   label: string;
   selected: boolean;
   onPress: () => void;
-  icon?: 'calendar';
+  icon?: 'calendar' | 'repeat';
 }): React.JSX.Element {
   const theme = useTheme();
   const color = selected ? theme.colors.onPrimary : theme.colors.text;
@@ -486,6 +537,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   due: {
+    marginTop: 2,
+  },
+  repeatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     marginTop: 2,
   },
   doneText: {

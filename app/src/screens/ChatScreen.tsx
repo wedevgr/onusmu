@@ -12,7 +12,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import * as Crypto from 'expo-crypto';
 import type { RootStackParamList, TabParamList } from '../navigation/RootNavigator';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import type { ChatMessage } from '../api/types';
 import { CitationChips } from '../components/CitationChips';import { Header } from '../components/Header';
 import { Icon, IconButton } from '../components/Icon';
@@ -21,6 +21,17 @@ import { TypingDots } from '../components/TypingDots';
 import { radius, spacing, typography, useTheme } from '../theme';
 
 type Props = BottomTabScreenProps<TabParamList, 'Chat'>;
+
+/**
+ * The streamed answer without its source markers ("[2]", "[F1]"), including one still being
+ * written at the end. The finished answer arrives already clean.
+ */
+function withoutMarkers(text: string): string {
+  return text
+    .replace(/\s*\[F?\d+(?:\s*,\s*F?\d+)*\]/g, '')
+    .replace(/\s*\[F?[\d,\s]*$/, '')
+    .replace(/[ \t]+([.,;:!?·])/g, '$1');
+}
 
 function dayOffsetFor(iso: string): number {
   const day = new Date(iso);
@@ -40,6 +51,10 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>(SUGGESTIONS);
+  // The answer while it is being written: what the server is doing, then the text so far.
+  const [live, setLive] = useState<{ status: string; text: string } | null>(null);
+  // Questions to ask next, shown under the latest answer.
+  const [followUps, setFollowUps] = useState<string[]>([]);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const handledInitialMessage = useRef<string | null>(null);
 
@@ -49,6 +64,7 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
         const { messages: history } = await api.listMessages(conversationId);
         setConversationId(conversationId);
         setMessages(history);
+        setFollowUps([]);
       } catch {
         setConversationId(null);
         setMessages([]);
@@ -127,12 +143,28 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
         createdAt: new Date().toISOString(),
       };
       setMessages((current) => [...current, optimistic]);
+      setFollowUps([]);
+      setLive({ status: 'Καταλαβαίνω την ερώτηση…', text: '' });
+      const request = { message: trimmed, conversationId: conversationId ?? undefined };
+      let received = false;
       try {
-        const response = await api.sendChat({
-          message: trimmed,
-          conversationId: conversationId ?? undefined,
-        });
+        let response;
+        try {
+          response = await api.streamChat(request, {
+            onStart: (id) => setConversationId(id),
+            onStatus: (status) => setLive((current) => (current ? { ...current, status } : current)),
+            onDelta: (piece) => {
+              received = true;
+              setLive((current) => ({ status: current?.status ?? '', text: (current?.text ?? '') + piece }));
+            },
+          });
+        } catch (e) {
+          // A server without streaming answers 404; ask the plain way instead.
+          if (received || !(e instanceof ApiError) || e.status !== 404) throw e;
+          response = await api.sendChat(request);
+        }
         setConversationId(response.conversationId);
+        setFollowUps(response.followUps ?? []);
         setMessages((current) => [
           ...current,
           {
@@ -146,6 +178,7 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Δεν ήταν δυνατή η απάντηση.');
       } finally {
+        setLive(null);
         setSending(false);
       }
     },
@@ -170,6 +203,7 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
     handledConversationId.current = undefined;
     setConversationId(null);
     setMessages([]);
+    setFollowUps([]);
     setError(null);
     navigation.setParams({ conversationId: undefined });
     loadSuggestions();
@@ -254,7 +288,36 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
             ListFooterComponent={
               sending ? (
                 <View style={styles.answer}>
-                  <TypingDots />
+                  {live && live.text.length > 0 ? (
+                    <Text style={[styles.messageText, { color: theme.colors.text }]}>
+                      {withoutMarkers(live.text)}
+                    </Text>
+                  ) : (
+                    <View style={styles.statusRow}>
+                      <TypingDots />
+                      {live?.status ? (
+                        <Text style={[typography.caption, styles.statusText, { color: theme.colors.textMuted }]}>
+                          {live.status}
+                        </Text>
+                      ) : null}
+                    </View>
+                  )}
+                </View>
+              ) : followUps.length > 0 ? (
+                <View style={styles.followUps}>
+                  {followUps.map((question) => (
+                    <Pressable
+                      key={question}
+                      accessibilityRole="button"
+                      onPress={() => void send(question)}
+                      style={({ pressed }) => [styles.followUp, theme.glass, { opacity: pressed ? 0.6 : 1 }]}
+                    >
+                      <Icon name="corner-down-right" size={14} color={theme.colors.textMuted} />
+                      <Text style={[typography.label, styles.followUpText, { color: theme.colors.text }]}>
+                        {question}
+                      </Text>
+                    </Pressable>
+                  ))}
                 </View>
               ) : null
             }
@@ -376,6 +439,32 @@ const styles = StyleSheet.create({
   },
   suggestionText: {
     fontWeight: '400',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  statusText: {
+    flexShrink: 1,
+  },
+  followUps: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    alignItems: 'flex-start',
+  },
+  followUp: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: radius.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    maxWidth: '100%',
+  },
+  followUpText: {
+    fontWeight: '400',
+    flexShrink: 1,
   },
   listContent: {
     paddingHorizontal: SCREEN_GUTTER,

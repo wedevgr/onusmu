@@ -83,6 +83,16 @@ export const lightTheme: Theme = {
 };
 export const darkTheme: Theme = { dark: true, colors: darkColors, glass: glassFor(darkColors) };
 
+// The emblem's dark green, used for the launch screen and sign-in. `green` must stay equal to
+// the splash backgroundColor in app.json so the native splash hands over without a flash.
+export const brand = {
+  green: '#011A1A',
+  greenTop: '#022322',
+  greenBottom: '#060A0A',
+  // Cool mint light, the colour the chrome reflects.
+  glow: '150,225,210',
+} as const;
+
 // The floating tab bar; tab screens reserve this much room at the bottom.
 export const tabBar = { height: 66, inset: 16, gap: 12 } as const;
 

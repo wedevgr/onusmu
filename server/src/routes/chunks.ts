@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { query, queryOne } from '../db';
 import { AppError } from '../lib/errors';
 import { ctx, decryptText } from '../lib/crypto';
+import { readInsights } from '../lib/insights';
+import { invalidateTranscriptCache } from '../lib/scan';
 import { downloadAudio, removeAudio } from '../lib/storage';
 
 const listChunksSchema = z.object({
@@ -24,6 +26,7 @@ export default async function chunkRoutes(app: FastifyInstance): Promise<void> {
       endedAt: Date;
       processingStatus: string;
       createdAt: Date;
+      insights: string | null;
     }>(
       `SELECT id,
               session_id        AS "sessionId",
@@ -31,7 +34,8 @@ export default async function chunkRoutes(app: FastifyInstance): Promise<void> {
               started_at        AS "startedAt",
               ended_at          AS "endedAt",
               processing_status AS "processingStatus",
-              created_at        AS "createdAt"
+              created_at        AS "createdAt",
+              insights
        FROM transcript_chunks
        WHERE user_id = $1
          AND ($2::uuid IS NULL OR session_id = $2)
@@ -52,6 +56,7 @@ export default async function chunkRoutes(app: FastifyInstance): Promise<void> {
       chunks: rows.map((r) => ({
         ...r,
         text: decryptText(r.text, ctx.chunkText(request.userId, r.id)),
+        insights: readInsights(request.userId, r.id, r.insights),
       })),
     };
   });
@@ -77,6 +82,7 @@ export default async function chunkRoutes(app: FastifyInstance): Promise<void> {
       [id, request.userId],
     );
     if (!chunk) throw new AppError(404, 'Chunk not found');
+    invalidateTranscriptCache(request.userId);
     if (chunk.audio_path) await removeAudio(chunk.audio_path).catch(() => undefined);
     return { ok: true };
   });
@@ -92,6 +98,7 @@ export default async function chunkRoutes(app: FastifyInstance): Promise<void> {
       [id, request.userId],
     );
     if (!session) throw new AppError(404, 'Session not found');
+    invalidateTranscriptCache(request.userId);
     // Chunks and their jobs cascade-delete; purge audio objects best-effort.
     for (const p of paths) {
       await removeAudio(p.audio_path).catch(() => undefined);

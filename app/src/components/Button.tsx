@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { radius, spacing, useTheme, typography } from '../theme';
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
@@ -11,6 +11,8 @@ interface ButtonProps {
   disabled?: boolean;
   loading?: boolean;
   compact?: boolean;
+  // Shown before the title, e.g. a provider mark.
+  icon?: React.ReactNode;
 }
 
 export function Button({
@@ -20,6 +22,7 @@ export function Button({
   disabled = false,
   loading = false,
   compact = false,
+  icon,
 }: ButtonProps): React.JSX.Element {
   const theme = useTheme();
 
@@ -53,9 +56,12 @@ export function Button({
       {loading ? (
         <ActivityIndicator color={textColor} />
       ) : (
-        <Text style={[typography.label, compact ? styles.compactLabel : styles.label, { color: textColor }]}>
-          {title}
-        </Text>
+        <View style={styles.content}>
+          {icon}
+          <Text style={[typography.label, compact ? styles.compactLabel : styles.label, { color: textColor }]}>
+            {title}
+          </Text>
+        </View>
       )}
     </Pressable>
   );
@@ -75,6 +81,11 @@ const styles = StyleSheet.create({
     minHeight: 36,
     paddingHorizontal: spacing.md,
     alignSelf: 'flex-start',
+  },
+  content: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   label: {
     fontSize: 16,

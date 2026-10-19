@@ -16,7 +16,8 @@ import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import * as Crypto from 'expo-crypto';
 import type { RootStackParamList, TabParamList } from '../navigation/RootNavigator';
 import { api } from '../api/client';
-import type { SessionSummary } from '../api/types';
+import type { RecordingInsights, SessionSummary } from '../api/types';
+import { InsightList } from '../components/InsightList';
 import { recorder } from '../lib/recorder';
 import * as outbox from '../lib/outbox';
 import { stopRemoteSession, triggerSync } from '../lib/sync';
@@ -56,7 +57,7 @@ function dayOffsetFor(iso: string): number {
   return Math.round((today.getTime() - sessionDay.getTime()) / 86400000);
 }
 
-export default function HomeScreen({ navigation }: Props): React.JSX.Element {
+export default function HomeScreen({ navigation, route }: Props): React.JSX.Element {
   const theme = useTheme();
   const rootNav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const recording = useRecordingStore();
@@ -73,6 +74,7 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
   const [todaySeconds, setTodaySeconds] = useState<number | null>(null);
   const [recent, setRecent] = useState<SessionSummary[]>([]);
   const [recentError, setRecentError] = useState<string | null>(null);
+  const [insights, setInsights] = useState<RecordingInsights[]>([]);
   const [elapsedMs, setElapsedMs] = useState(0);
 
   const startedAtMs = recording.startedAt ? new Date(recording.startedAt).getTime() : null;
@@ -88,6 +90,12 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
   const load = useCallback(() => {
     void useBillingStore.getState().refresh();
     void useRemindersStore.getState().refresh();
+    api
+      .listInsights()
+      .then((response) => setInsights(response.recordings))
+      .catch(() => {
+        // Confirmations are a bonus; an older server does not have them.
+      });
     api
       .listSessions({ from: startOfTodayIso() })
       .then((response) => {
@@ -119,11 +127,22 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
   const lastStoppedAt = useRecordingStore((state) => state.lastStoppedAt);
   useEffect(() => {
     if (!lastStoppedAt) return;
-    const timers = [1500, 4000, 8000].map((ms) => setTimeout(load, ms));
+    // Transcribing and reading the last chunk takes a little longer, so keep checking for its
+    // confirmations for about a minute.
+    const timers = [1500, 4000, 8000, 15000, 30000, 60000].map((ms) => setTimeout(load, ms));
     return () => timers.forEach(clearTimeout);
   }, [lastStoppedAt, load]);
 
-  const startRecording = async (): Promise<void> => {
+  const dismissInsights = (): void => {
+    const chunkIds = insights.map((r) => r.chunkId);
+    setInsights([]);
+    api.markInsightsSeen(chunkIds).catch(() => {
+      // Shown again next time; nothing is lost.
+    });
+  };
+
+  // openScreen: false for hold-to-talk, which records right here until the finger lifts.
+  const startRecording = async ({ openScreen = true }: { openScreen?: boolean } = {}): Promise<void> => {
     setStarting(true);
     const sessionLocalId = Crypto.randomUUID();
     try {
@@ -164,7 +183,7 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
           : undefined,
       );
       useRecordingStore.getState().begin(sessionLocalId, startedAt);
-      rootNav.navigate('Recording');
+      if (openScreen) rootNav.navigate('Recording');
     } catch (e) {
       useRecordingStore.getState().reset();
       Alert.alert('Η καταγραφή απέτυχε', e instanceof Error ? e.message : 'Δοκίμασε ξανά.');
@@ -172,6 +191,52 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
       setStarting(false);
     }
   };
+
+  // Hold to talk: recording starts on a long press and is saved when the finger lifts. The
+  // finger can lift before the recorder has started, so the release is remembered.
+  const hold = useRef({ active: false, released: false });
+  const [holding, setHolding] = useState(false);
+
+  const stopHere = async (): Promise<void> => {
+    await recorder.stop();
+    const { sessionLocalId } = useRecordingStore.getState();
+    if (sessionLocalId) void stopRemoteSession(sessionLocalId, new Date().toISOString());
+    useRecordingStore.getState().markStopped();
+    useRecordingStore.getState().reset();
+  };
+
+  const endHold = async (): Promise<void> => {
+    if (!hold.current.active) return;
+    hold.current.active = false;
+    setHolding(false);
+    if (useRecordingStore.getState().active) await stopHere();
+  };
+
+  const beginHold = (): void => {
+    if (recording.active || starting) return;
+    hold.current = { active: true, released: false };
+    setHolding(true);
+    void startRecording({ openScreen: false }).then(() => {
+      if (hold.current.released || !useRecordingStore.getState().active) void endHold();
+    });
+  };
+
+  const releaseHold = (): void => {
+    if (!hold.current.active) return;
+    hold.current.released = true;
+    if (useRecordingStore.getState().active) void endHold();
+  };
+
+  // A shortcut (aimemory://record) asks for a recording; each request carries a new value.
+  const recordRequest = route.params?.record;
+  const handledRecordRequest = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!recordRequest || handledRecordRequest.current === recordRequest) return;
+    handledRecordRequest.current = recordRequest;
+    if (useRecordingStore.getState().active) rootNav.navigate('Recording');
+    else void startRecording();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordRequest]);
 
   const handlePrimary = (): void => {
     if (recording.active) {
@@ -221,7 +286,10 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
           accessibilityRole="button"
           accessibilityLabel={recording.active ? 'Άνοιγμα καταγραφής' : 'Έναρξη καταγραφής'}
           onPress={handlePrimary}
-          disabled={starting}
+          onLongPress={beginHold}
+          onPressOut={releaseHold}
+          delayLongPress={300}
+          disabled={starting && !holding}
           style={({ pressed }) => [
             styles.recorder,
             theme.glass,
@@ -259,13 +327,18 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
                 </Text>
               </View>
               <Text style={[typography.caption, styles.recorderNote, { color: theme.colors.textMuted }]}>
-                {recording.chunkCount} τμήματα, {syncing} σε συγχρονισμό. Πάτα για άνοιγμα.
+                {holding
+                  ? 'Άφησε για αποθήκευση.'
+                  : `${recording.chunkCount} τμήματα, ${syncing} σε συγχρονισμό. Πάτα για άνοιγμα.`}
               </Text>
             </>
           ) : (
             <>
               <Text style={[typography.heading, styles.recorderTitle, { color: theme.colors.text }]}>
                 {starting ? 'Εκκίνηση' : 'Πάτα για καταγραφή'}
+              </Text>
+              <Text style={[typography.caption, styles.recorderNote, { color: theme.colors.textMuted }]}>
+                ή κράτα πατημένο για γρήγορη σημείωση
               </Text>
               <Text style={[typography.caption, styles.recorderNote, { color: theme.colors.textMuted }]}>
                 {todayLine}
@@ -326,6 +399,43 @@ export default function HomeScreen({ navigation }: Props): React.JSX.Element {
             />
           </Pressable>
         </View>
+
+        {insights.length > 0 ? (
+          <>
+            <View style={styles.insightsHeader}>
+              <Text style={[typography.heading, styles.flex, { color: theme.colors.text }]}>
+                Κατάλαβα από τις καταγραφές σου
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={dismissInsights}
+                hitSlop={8}
+                style={({ pressed }) => [styles.insightsOk, theme.glass, { opacity: pressed ? 0.6 : 1 }]}
+              >
+                <Text style={[typography.label, { color: theme.colors.text }]}>OK</Text>
+              </Pressable>
+            </View>
+            <View style={[styles.insightsCard, theme.glass]}>
+              {insights.map((recording, index) => (
+                <View key={recording.chunkId} style={index > 0 ? styles.insightsGap : undefined}>
+                  <Text style={[typography.caption, { color: theme.colors.textFaint }]}>
+                    {formatDayLabel(recording.startedAt)} στις {formatClock(recording.startedAt)}
+                  </Text>
+                  <InsightList
+                    compact
+                    chunkId={recording.chunkId}
+                    items={recording.items}
+                    onChange={(items) =>
+                      setInsights((current) =>
+                        current.map((r) => (r.chunkId === recording.chunkId ? { ...r, items } : r)),
+                      )
+                    }
+                  />
+                </View>
+              ))}
+            </View>
+          </>
+        ) : null}
 
         <Text style={[typography.heading, styles.sectionLabel, { color: theme.colors.text }]}>
           Υπενθυμίσεις
@@ -483,5 +593,28 @@ const styles = StyleSheet.create({
   sectionLabel: {
     marginTop: spacing.xl,
     marginBottom: 12,
+  },
+  flex: {
+    flex: 1,
+  },
+  insightsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginTop: spacing.xl,
+    marginBottom: 12,
+  },
+  insightsOk: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 14,
+    height: 32,
+    justifyContent: 'center',
+  },
+  insightsCard: {
+    borderRadius: radius.md,
+    padding: spacing.md,
+  },
+  insightsGap: {
+    marginTop: spacing.md,
   },
 });

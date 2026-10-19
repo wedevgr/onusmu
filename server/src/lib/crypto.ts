@@ -95,6 +95,11 @@ export const ctx = {
     `message.citation|${userId}|${messageId}`,
   reminderText: (userId: string, reminderId: string): EncryptionContext =>
     `reminder.text|${userId}|${reminderId}`,
+  factData: (userId: string, factId: string): EncryptionContext => `fact.data|${userId}|${factId}`,
+  chunkInsights: (userId: string, chunkId: string): EncryptionContext =>
+    `chunk.insights|${userId}|${chunkId}`,
+  term: (userId: string, termId: string, field: 'term' | 'note' | 'variants'): EncryptionContext =>
+    `term.${field}|${userId}|${termId}`,
   /** Storage paths are '<user_id>/<chunk_id>.m4a', so the path identifies owner and chunk. */
   audio: (path: string): EncryptionContext => `audio|${path}`,
 };

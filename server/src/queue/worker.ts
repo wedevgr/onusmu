@@ -1,6 +1,8 @@
 import { query, queryOne } from '../db';
-import { ctx, encryptText } from '../lib/crypto';
-import { suggestRemindersFromChunk } from '../lib/reminders';
+import { ctx, decryptText, encryptText } from '../lib/crypto';
+import { loadTermsOrEmpty, recordTerms, reviseTranscript, transcriptionPrompt, type FoundTerm } from '../lib/glossary';
+import { understandChunk } from '../lib/understand';
+import { invalidateTranscriptCache } from '../lib/scan';
 import { downloadAudio, removeAudio } from '../lib/storage';
 import { getEmbeddingProvider, getSttProvider } from '../providers';
 import type { AudioJob } from './jobs';
@@ -15,8 +17,19 @@ interface ChunkRow {
   processing_status: string;
 }
 
+/** Text of the chunk just before this one in the same recording, '' if none. */
+async function previousChunkText(chunk: ChunkRow): Promise<string> {
+  const prev = await queryOne<{ id: string; text: string }>(
+    `SELECT id, text FROM transcript_chunks
+     WHERE session_id = $1 AND user_id = $2 AND started_at < $3 AND text <> ''
+     ORDER BY started_at DESC LIMIT 1`,
+    [chunk.session_id, chunk.user_id, chunk.started_at],
+  );
+  return prev ? decryptText(prev.text, ctx.chunkText(chunk.user_id, prev.id)) : '';
+}
+
 /**
- * Pipeline for one chunk: transcribing -> (text) -> embedding -> completed.
+ * Pipeline for one chunk: transcribing -> proofreading -> (text) -> embedding -> completed.
  * Audio is deleted after completion unless the user enabled retention.
  * Any thrown error is caught by the worker and schedules a retry; the audio
  * file is kept until the chunk completes, so nothing is lost silently.
@@ -38,8 +51,29 @@ export async function processChunkJob(job: AudioJob): Promise<void> {
     chunk.id,
   ]);
 
-  const audio = await downloadAudio(chunk.audio_path);
-  const text = await getSttProvider().transcribe(audio, chunk.audio_path.split('/').pop() ?? 'chunk.m4a');
+  const [audio, previousText, terms] = await Promise.all([
+    downloadAudio(chunk.audio_path),
+    previousChunkText(chunk),
+    loadTermsOrEmpty(chunk.user_id),
+  ]);
+  const heard = await getSttProvider().transcribe(audio, chunk.audio_path.split('/').pop() ?? 'chunk.m4a', {
+    prompt: transcriptionPrompt(terms, previousText),
+    terms: terms.filter((t) => !t.hidden).map((t) => t.term),
+  });
+
+  // Fix misheard names against the user's vocabulary and collect new ones. Optional: on
+  // failure the transcript is kept as heard.
+  let text = heard;
+  let foundTerms: FoundTerm[] = [];
+  if (heard) {
+    try {
+      const revision = await reviseTranscript(heard, previousText, terms);
+      text = revision.text;
+      foundTerms = revision.terms;
+    } catch (err) {
+      console.error('[glossary] proofreading failed for chunk', chunk.id, err instanceof Error ? err.message : err);
+    }
+  }
 
   if (!text) {
     // Silence / no speech: complete without embedding, still respect retention.
@@ -56,6 +90,8 @@ export async function processChunkJob(job: AudioJob): Promise<void> {
     `UPDATE transcript_chunks SET text = $2, processing_status = 'embedding' WHERE id = $1`,
     [chunk.id, encryptText(text, ctx.chunkText(chunk.user_id, chunk.id))],
   );
+  // Search must see the new transcript.
+  invalidateTranscriptCache(chunk.user_id);
 
   const [embedding] = await getEmbeddingProvider().embed([text]);
   const vector = `[${embedding.join(',')}]`;
@@ -64,11 +100,18 @@ export async function processChunkJob(job: AudioJob): Promise<void> {
     [chunk.id, vector],
   );
 
-  // Suggestions are extra: a failure here must not retry (and re-bill) the transcription.
+  // Reminders, finished tasks and facts are extra: a failure here must not retry (and re-bill)
+  // the transcription.
   try {
-    await suggestRemindersFromChunk(chunk, text);
+    await understandChunk(chunk, text, previousText);
   } catch (err) {
-    console.error('[reminders] suggestion failed for chunk', chunk.id, err instanceof Error ? err.message : err);
+    console.error('[understand] failed for chunk', chunk.id, err instanceof Error ? err.message : err);
+  }
+
+  try {
+    await recordTerms(chunk.user_id, foundTerms, terms);
+  } catch (err) {
+    console.error('[glossary] saving terms failed for chunk', chunk.id, err instanceof Error ? err.message : err);
   }
 
   await maybeDeleteAudio(chunk);

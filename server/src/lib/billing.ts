@@ -9,16 +9,38 @@ export type UsagePeriod = 'day' | 'month';
 interface Plan {
   period: UsagePeriod;
   limitSeconds: number | null; // null = no limit
+  // Chat questions per day. Each costs a few model calls, so even "unlimited" has a ceiling
+  // that only a bug or abuse would reach.
+  chatPerDay: number;
 }
 
 // Recording allowances. Prices (€3 / €5 / €10 / €20 a month) live in Stripe, not here.
 export const PLANS: Record<PlanId, Plan> = {
-  free: { period: 'day', limitSeconds: 5 * 60 },
-  starter: { period: 'day', limitSeconds: 30 * 60 },
-  plus: { period: 'day', limitSeconds: 5 * 60 * 60 },
-  pro: { period: 'day', limitSeconds: 10 * 60 * 60 },
-  unlimited: { period: 'month', limitSeconds: null },
+  free: { period: 'day', limitSeconds: 5 * 60, chatPerDay: 20 },
+  starter: { period: 'day', limitSeconds: 30 * 60, chatPerDay: 60 },
+  plus: { period: 'day', limitSeconds: 5 * 60 * 60, chatPerDay: 200 },
+  pro: { period: 'day', limitSeconds: 10 * 60 * 60, chatPerDay: 400 },
+  unlimited: { period: 'month', limitSeconds: null, chatPerDay: 1000 },
 };
+
+/** Throws 429 when the user has asked their plan's questions for today (billing-timezone day). */
+export async function assertChatAllowance(userId: string): Promise<void> {
+  const { plan } = await getActivePlan(userId);
+  const limit = PLANS[plan].chatPerDay;
+  const row = await queryOne<{ asked: number }>(
+    `SELECT count(*)::int AS asked FROM chat_messages
+     WHERE user_id = $1 AND role = 'user'
+       AND created_at >= (date_trunc('day', now() AT TIME ZONE $2::text) AT TIME ZONE $2::text)`,
+    [userId, config.BILLING_TIMEZONE],
+  );
+  if ((row?.asked ?? 0) >= limit) {
+    throw new AppError(
+      429,
+      `Έφτασες τις ${limit} ερωτήσεις για σήμερα. Το όριο ανανεώνεται τα μεσάνυχτα` +
+        (plan === 'unlimited' ? '.' : ' ή με ένα μεγαλύτερο πλάνο.'),
+    );
+  }
+}
 
 export interface BillingStatus {
   plan: PlanId;

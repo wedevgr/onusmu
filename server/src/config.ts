@@ -12,12 +12,21 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
 
   STT_PROVIDER: z.enum(['whisper', 'deepgram']).default('whisper'),
+  // OpenAI transcription model ("whisper" provider). gpt-4o-transcribe is far better on Greek than whisper-1.
+  STT_MODEL: z.string().default('gpt-4o-transcribe'),
+  // ISO-639-1 language to force (e.g. "el"). Empty detects it per chunk, so notes spoken in
+  // another language (Bulgarian on a trip) are not forced into Greek; the prompt leans to Greek.
+  STT_LANGUAGE: z.string().default(''),
   OPENAI_API_KEY: z.string().default(''),
   DEEPGRAM_API_KEY: z.string().default(''),
 
   EMBEDDING_MODEL: z.string().default('text-embedding-3-small'),
   EMBEDDING_DIM: z.coerce.number().int().default(1536),
   LLM_MODEL: z.string().default('gpt-4o-mini'),
+  // Model that reads each recording for tasks, money and readings; empty uses LLM_MODEL.
+  // gpt-4.1-mini was clearly more consistent than gpt-4o-mini on real notes (debts, dates, sales).
+  // A stronger model here makes amounts and "who owes whom" more reliable.
+  EXTRACT_MODEL: z.string().default('gpt-4.1-mini'),
 
   MAX_UPLOAD_MB: z.coerce.number().int().default(25),
   JOB_POLL_MS: z.coerce.number().int().default(2000),

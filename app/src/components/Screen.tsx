@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import { spacing, tabBar, useTheme } from '../theme';
+import { brand, spacing, tabBar, useTheme } from '../theme';
 
 interface ScreenProps {
   children: React.ReactNode;
@@ -21,6 +21,8 @@ interface ScreenProps {
   padded?: boolean;
   // Tab screens sit above the tab bar, which already clears the home indicator.
   bottomInset?: boolean;
+  // 'brand' is the dark green of the emblem, for the launch and sign-in screens.
+  backdrop?: 'glass' | 'brand';
 }
 
 export const SCREEN_GUTTER = 20;
@@ -37,7 +39,7 @@ interface GlowProps {
 
 // A soft light source built from stacked translucent discs, so it stays smooth on Android,
 // where the blur layer above cannot be relied on.
-function Glow({ size, rgb, strength, style }: GlowProps): React.JSX.Element {
+export function Glow({ size, rgb, strength, style }: GlowProps): React.JSX.Element {
   return (
     <View style={[styles.glow, { width: size, height: size }, style]}>
       {Array.from({ length: GLOW_STEPS }, (_, step) => {
@@ -59,11 +61,26 @@ function Glow({ size, rgb, strength, style }: GlowProps): React.JSX.Element {
   );
 }
 
+// Dark green, slightly lighter at the top, with one faint mint light behind the header.
+export function BrandBackdrop(): React.JSX.Element {
+  return (
+    <View pointerEvents="none" style={styles.backdrop}>
+      <LinearGradient
+        colors={[brand.greenTop, brand.green, brand.greenBottom]}
+        locations={[0, 0.45, 1]}
+        style={StyleSheet.absoluteFill}
+      />
+      <Glow size={620} rgb={brand.glow} strength={0.08} style={styles.glowBrand} />
+    </View>
+  );
+}
+
 export function Screen({
   children,
   style,
   padded = true,
   bottomInset = true,
+  backdrop = 'glass',
 }: ScreenProps): React.JSX.Element {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -132,24 +149,28 @@ export function Screen({
       style={[
         styles.base,
         {
-          backgroundColor: theme.colors.background,
+          backgroundColor: backdrop === 'brand' ? brand.green : theme.colors.background,
           paddingTop: insets.top + spacing.sm,
           paddingBottom,
         },
         style,
       ]}
     >
-      <View pointerEvents="none" style={styles.backdrop}>
-        <LinearGradient
-          colors={['#0C0D11', '#07080A', '#0A0B0E']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-        <Glow size={560} rgb="150,168,205" strength={0.26} style={styles.glowTop} />
-        <Glow size={540} rgb="120,128,150" strength={0.16} style={styles.glowBottom} />
-        <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
-      </View>
+      {backdrop === 'brand' ? (
+        <BrandBackdrop />
+      ) : (
+        <View pointerEvents="none" style={styles.backdrop}>
+          <LinearGradient
+            colors={['#0C0D11', '#07080A', '#0A0B0E']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+          <Glow size={560} rgb="150,168,205" strength={0.26} style={styles.glowTop} />
+          <Glow size={540} rgb="120,128,150" strength={0.16} style={styles.glowBottom} />
+          <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
+        </View>
+      )}
       <View style={padded ? styles.padded : styles.flush}>{children}</View>
     </View>
   );
@@ -175,6 +196,10 @@ const styles = StyleSheet.create({
   glowBottom: {
     bottom: -250,
     left: -230,
+  },
+  glowBrand: {
+    top: -330,
+    alignSelf: 'center',
   },
   padded: {
     flex: 1,

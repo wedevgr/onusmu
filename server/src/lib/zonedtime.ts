@@ -71,3 +71,23 @@ export function zonedToUtc(local: string, timezone: string): Date | null {
   result = naive - offsetMinutes(new Date(result), timezone) * 60000;
   return new Date(result);
 }
+
+/** e.g. "16:05" in the given timezone. */
+export function formatZonedClock(instant: Date, timezone: string): string {
+  const c = wallClock(instant, timezone);
+  return `${pad(c.hour)}:${pad(c.minute)}`;
+}
+
+/** e.g. "Πέμπτη 15 Οκτωβρίου 2026 στις 18:21" in the given timezone, for the answer model to quote. */
+export function formatZonedGreek(instant: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('el-GR', {
+    timeZone: timezone,
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(instant);
+}

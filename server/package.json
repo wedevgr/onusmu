@@ -12,7 +12,11 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "db:push": "tsx scripts/apply-migrations.ts",
-    "encrypt:existing": "tsx scripts/encrypt-existing.ts"
+    "encrypt:existing": "tsx scripts/encrypt-existing.ts",
+    "terms:build": "tsx scripts/build-terms.ts",
+    "facts:build": "tsx scripts/build-facts.ts",
+    "reembed": "tsx scripts/reembed.ts",
+    "test": "node --import tsx --import ./test/setup.ts --test test/*.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",

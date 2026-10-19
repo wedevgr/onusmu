@@ -17,6 +17,7 @@ import { api } from '../api/client';
 import type { Chunk, SessionSummary } from '../api/types';
 import { dayBoundsIso, formatClock, formatDateHeader, formatDurationHuman } from '../lib/time';
 import { ChunkStatusBadge } from '../components/ChunkStatusBadge';
+import { InsightList } from '../components/InsightList';
 import { EmptyState } from '../components/EmptyState';
 import { Header } from '../components/Header';
 import { Icon, IconButton } from '../components/Icon';
@@ -222,6 +223,15 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
           {pending ? 'Αναμονή μεταγραφής' : chunk.text}
         </Text>
         <ChunkStatusBadge status={chunk.processingStatus} />
+        {chunk.insights && chunk.insights.length > 0 ? (
+          <InsightList
+            chunkId={chunk.id}
+            items={chunk.insights}
+            onChange={(items) =>
+              setChunks((current) => current.map((c) => (c.id === chunk.id ? { ...c, insights: items } : c)))
+            }
+          />
+        ) : null}
       </View>
     );
   };

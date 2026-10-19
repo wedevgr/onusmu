@@ -1,11 +1,12 @@
 import { create } from 'zustand';
 import { api } from '../api/client';
-import type { Reminder, UpdateReminderRequest } from '../api/types';
+import type { Reminder, RepeatInput, UpdateReminderRequest } from '../api/types';
 import {
   cancelReminderNotifications,
   ensureNotificationPermission,
   scheduleReminderNotifications,
 } from '../lib/notifications';
+import { refreshBriefings } from '../lib/briefing';
 
 interface RemindersState {
   reminders: Reminder[];
@@ -15,7 +16,7 @@ interface RemindersState {
 
 interface RemindersActions {
   refresh: () => Promise<void>;
-  create: (text: string, dueAt: string | null) => Promise<void>;
+  create: (text: string, dueAt: string | null, repeat?: RepeatInput | null) => Promise<void>;
   update: (id: string, body: UpdateReminderRequest) => Promise<void>;
   remove: (id: string) => Promise<void>;
   clear: () => void;
@@ -33,7 +34,10 @@ function sortReminders(list: Reminder[]): Reminder[] {
 export const useRemindersStore = create<RemindersState & RemindersActions>((set, get) => {
   const apply = (reminders: Reminder[]): void => {
     set({ reminders: sortReminders(reminders) });
-    void scheduleReminderNotifications(reminders).catch(() => undefined);
+    // Reminders are scheduled first; the briefings then follow the tasks as they now are.
+    void scheduleReminderNotifications(reminders)
+      .catch(() => undefined)
+      .then(() => refreshBriefings());
   };
 
   const replace = (reminder: Reminder): void => {
@@ -61,9 +65,9 @@ export const useRemindersStore = create<RemindersState & RemindersActions>((set,
       }
     },
 
-    create: async (text, dueAt) => {
+    create: async (text, dueAt, repeat = null) => {
       await askIfTimed(dueAt);
-      replace(await api.createReminder({ text, dueAt }));
+      replace(await api.createReminder({ text, dueAt, repeat }));
     },
 
     update: async (id, body) => {

@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { query } from '../db';
 import { ctx, decryptText } from '../lib/crypto';
 import { getLlmProvider } from '../providers';
-import { formatClock, formatDay } from '../lib/timeparse';
+import { getUserTimezone } from '../lib/rag';
+import { formatZoned, formatZonedClock } from '../lib/zonedtime';
 
 const DEFAULT_SUGGESTIONS = [
   'Τι συζήτησα σήμερα;',
@@ -52,10 +53,11 @@ export default async function suggestionRoutes(app: FastifyInstance): Promise<vo
       return { suggestions: DEFAULT_SUGGESTIONS };
     }
 
+    const timezone = await getUserTimezone(userId);
     const excerpts = rows
       .slice()
       .reverse()
-      .map((r) => `[${formatClock(r.started_at)}-${formatClock(r.ended_at)}] ${decryptText(r.text, ctx.chunkText(userId, r.id))}`)
+      .map((r) => `[${formatZonedClock(r.started_at, timezone)}-${formatZonedClock(r.ended_at, timezone)}] ${decryptText(r.text, ctx.chunkText(userId, r.id))}`)
       .join('\n');
 
     let suggestions = DEFAULT_SUGGESTIONS;
@@ -65,7 +67,7 @@ export default async function suggestionRoutes(app: FastifyInstance): Promise<vo
           {
             role: 'user',
             content:
-              `Today's date: ${formatDay(new Date())}.\n` +
+              `Current local time: ${formatZoned(new Date(), timezone)}.\n` +
               `Here are transcript excerpts from the user's recordings of the last 24 hours:\n\n${excerpts}\n\n` +
               'Propose exactly 3 short questions (max 12 words each) the user could ask their personal memory AI about these memories. ' +
               'Write the questions in Greek (ελληνικά). ' +

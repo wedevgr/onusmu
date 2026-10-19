@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { query, queryOne } from '../db';
+import { assertChatAllowance } from '../lib/billing';
 import { AppError } from '../lib/errors';
-import { answerWithRag, type Citation } from '../lib/rag';
-import { parseTimeExpressions } from '../lib/timeparse';
+import { answerWithRag, suggestFollowUps, type Citation } from '../lib/rag';
 import {
   ctx,
   decryptCitations,
@@ -18,69 +18,128 @@ const chatSchema = z.object({
   conversationId: z.string().uuid().optional(),
 });
 
+interface Turn {
+  conversationId: string;
+  history: Array<{ role: 'user' | 'assistant'; content: string }>;
+}
+
+/** Opens or continues a conversation, saves the question and loads the recent history. */
+async function startTurn(userId: string, body: z.infer<typeof chatSchema>): Promise<Turn> {
+  await assertChatAllowance(userId);
+  let conversationId = body.conversationId ?? null;
+  if (conversationId) {
+    const owned = await queryOne(
+      `SELECT id FROM chat_conversations WHERE id = $1 AND user_id = $2`,
+      [conversationId, userId],
+    );
+    if (!owned) throw new AppError(404, 'Conversation not found');
+  } else {
+    // Ids are generated here (not by the database) because each encrypted
+    // value is bound to the id of the row it is stored in.
+    conversationId = randomUUID();
+    await query(`INSERT INTO chat_conversations (id, user_id, title) VALUES ($1, $2, $3)`, [
+      conversationId,
+      userId,
+      encryptText(body.message.slice(0, 40), ctx.conversationTitle(userId, conversationId)),
+    ]);
+  }
+
+  const userMessageId = randomUUID();
+  await query(
+    `INSERT INTO chat_messages (id, conversation_id, user_id, role, content)
+     VALUES ($1, $2, $3, 'user', $4)`,
+    [
+      userMessageId,
+      conversationId,
+      userId,
+      encryptText(body.message, ctx.messageContent(userId, userMessageId)),
+    ],
+  );
+
+  const historyRows = await query<{ id: string; role: 'user' | 'assistant'; content: string }>(
+    `SELECT id, role, content FROM chat_messages
+     WHERE conversation_id = $1 AND user_id = $2 AND id <> $3
+     ORDER BY created_at DESC LIMIT 10`,
+    [conversationId, userId, userMessageId],
+  );
+  const history = historyRows.reverse().map((m) => ({
+    role: m.role,
+    content: decryptText(m.content, ctx.messageContent(userId, m.id)).slice(0, 1000),
+  }));
+  return { conversationId, history };
+}
+
+async function saveAnswer(
+  userId: string,
+  conversationId: string,
+  answer: string,
+  citations: Citation[],
+): Promise<string> {
+  const messageId = randomUUID();
+  await query(
+    `INSERT INTO chat_messages (id, conversation_id, user_id, role, content, citations)
+     VALUES ($1, $2, $3, 'assistant', $4, $5::jsonb)`,
+    [
+      messageId,
+      conversationId,
+      userId,
+      encryptText(answer, ctx.messageContent(userId, messageId)),
+      JSON.stringify(encryptCitations(citations, ctx.messageCitation(userId, messageId))),
+    ],
+  );
+  return messageId;
+}
+
 export default async function chatRoutes(app: FastifyInstance): Promise<void> {
   app.post('/chat', async (request) => {
     const body = chatSchema.parse(request.body);
     const userId = request.userId;
-
-    let conversationId = body.conversationId ?? null;
-    if (conversationId) {
-      const owned = await queryOne(
-        `SELECT id FROM chat_conversations WHERE id = $1 AND user_id = $2`,
-        [conversationId, userId],
-      );
-      if (!owned) throw new AppError(404, 'Conversation not found');
-    } else {
-      // Ids are generated here (not by the database) because each encrypted
-      // value is bound to the id of the row it is stored in.
-      conversationId = randomUUID();
-      await query(`INSERT INTO chat_conversations (id, user_id, title) VALUES ($1, $2, $3)`, [
-        conversationId,
-        userId,
-        encryptText(body.message.slice(0, 40), ctx.conversationTitle(userId, conversationId)),
-      ]);
-    }
-
-    const userMessageId = randomUUID();
-    await query(
-      `INSERT INTO chat_messages (id, conversation_id, user_id, role, content)
-       VALUES ($1, $2, $3, 'user', $4)`,
-      [
-        userMessageId,
-        conversationId,
-        userId,
-        encryptText(body.message, ctx.messageContent(userId, userMessageId)),
-      ],
-    );
-
-    const historyRows = await query<{ id: string; role: 'user' | 'assistant'; content: string }>(
-      `SELECT id, role, content FROM chat_messages
-       WHERE conversation_id = $1 AND user_id = $2 AND id <> $3
-       ORDER BY created_at DESC LIMIT 10`,
-      [conversationId, userId, userMessageId],
-    );
-    const history = historyRows.reverse().map((m) => ({
-      role: m.role,
-      content: decryptText(m.content, ctx.messageContent(userId, m.id)).slice(0, 1000),
-    }));
-
-    const range = parseTimeExpressions(body.message);
-    const { answer, citations } = await answerWithRag(userId, body.message, range, history);
-
-    const messageId = randomUUID();
-    await query(
-      `INSERT INTO chat_messages (id, conversation_id, user_id, role, content, citations)
-       VALUES ($1, $2, $3, 'assistant', $4, $5::jsonb)`,
-      [
-        messageId,
-        conversationId,
-        userId,
-        encryptText(answer, ctx.messageContent(userId, messageId)),
-        JSON.stringify(encryptCitations(citations, ctx.messageCitation(userId, messageId))),
-      ],
-    );
-
+    const { conversationId, history } = await startTurn(userId, body);
+    const { answer, citations } = await answerWithRag(userId, body.message, history);
+    const messageId = await saveAnswer(userId, conversationId, answer, citations);
     return { conversationId, messageId, answer, citations };
+  });
+
+  /**
+   * The same answer as POST /chat, streamed as server-sent events:
+   *   start {conversationId} -> status {text}... -> delta {text}... -> done {messageId, answer, citations, followUps}
+   * or error {message}. Delta text still contains [n] source markers; done has the clean answer.
+   */
+  app.post('/chat/stream', async (request, reply) => {
+    const body = chatSchema.parse(request.body);
+    const userId = request.userId;
+    // Fails as a normal JSON error (e.g. unknown conversation) before the stream starts.
+    const { conversationId, history } = await startTurn(userId, body);
+
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      // Proxies must pass each event on as it is written.
+      'X-Accel-Buffering': 'no',
+    });
+    const send = (event: string, data: unknown): void => {
+      reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    try {
+      send('start', { conversationId });
+      const { answer, citations } = await answerWithRag(userId, body.message, history, {
+        onStatus: (text) => send('status', { text }),
+        onDelta: (text) => send('delta', { text }),
+      });
+      const [messageId, followUps] = await Promise.all([
+        saveAnswer(userId, conversationId, answer, citations),
+        suggestFollowUps(body.message, answer),
+      ]);
+      send('done', { conversationId, messageId, answer, citations, followUps });
+    } catch (err) {
+      request.log.error({ err }, 'chat stream failed');
+      send('error', { message: 'Δεν ήταν δυνατή η απάντηση. Δοκίμασε ξανά.' });
+    } finally {
+      reply.raw.end();
+    }
   });
 
   app.get('/chat/conversations', async (request) => {

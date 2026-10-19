@@ -61,6 +61,8 @@ export interface Chunk {
   text: string;
   processingStatus: string;
   createdAt: string;
+  // What was understood from it; missing on older servers.
+  insights?: Insight[];
 }
 
 export interface ListChunksResponse {
@@ -72,6 +74,8 @@ export interface SearchParams {
   from?: string;
   to?: string;
   limit?: number;
+  // exact: literal matches (fast). related: other matches by meaning (slower).
+  mode?: 'exact' | 'related';
 }
 
 export interface SearchResult {
@@ -81,6 +85,11 @@ export interface SearchResult {
   endedAt: string;
   text: string;
   score: number;
+  // exact: contains the searched words. related: about the same thing in other words.
+  // Optional so an older server still works.
+  match?: 'exact' | 'related';
+  // [start, end) character ranges of matched words.
+  highlights?: Array<[number, number]>;
 }
 
 export interface SearchResponse {
@@ -91,6 +100,19 @@ export interface SettingsResponse {
   keepAudio: boolean;
   // Reminders found in recordings are created directly instead of waiting for confirmation.
   autoReminders: boolean;
+  // Morning briefing notification and its local time, "HH:mm". Missing on older servers.
+  briefingEnabled?: boolean;
+  briefingTime?: string;
+}
+
+export interface Briefing {
+  date: string;
+  title: string;
+  body: string;
+}
+
+export interface BriefingResponse {
+  briefings: Briefing[];
 }
 
 export interface Citation {
@@ -112,6 +134,16 @@ export interface ChatResponse {
   messageId: string;
   answer: string;
   citations: Citation[];
+  // Questions the user might ask next; only from the streaming endpoint.
+  followUps?: string[];
+}
+
+export interface ChatStreamHandlers {
+  onStart?: (conversationId: string) => void;
+  // What the server is doing before the answer starts, e.g. "Ψάχνω στις καταγραφές σου…".
+  onStatus?: (text: string) => void;
+  // A piece of the answer; may contain [n] source markers, removed in the final answer.
+  onDelta?: (text: string) => void;
 }
 
 export interface Conversation {
@@ -159,6 +191,25 @@ export interface OkResponse {
 
 export type ReminderStatus = 'suggested' | 'pending' | 'done' | 'dismissed';
 
+export type RepeatFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+// How a reminder repeats, as the server stores it.
+export interface Repeat {
+  freq: RepeatFrequency;
+  interval: number;
+  days?: number[];
+  monthDay?: number;
+  time: string;
+  start: string;
+  until?: string;
+}
+
+// What the app sends: the rest of the rule comes from the reminder's date.
+export interface RepeatInput {
+  freq: RepeatFrequency;
+  interval?: number;
+}
+
 export interface Reminder {
   id: string;
   text: string;
@@ -167,6 +218,12 @@ export interface Reminder {
   // Set when the server suggested this reminder from a recording.
   sourceChunkId: string | null;
   createdAt: string;
+  // Repeating reminders; missing on older servers.
+  repeat?: Repeat | null;
+  // e.g. "Κάθε Δευτέρα 09:00".
+  repeatLabel?: string | null;
+  // The next dates to notify, starting with dueAt.
+  upcoming?: string[];
 }
 
 export interface RemindersResponse {
@@ -176,10 +233,75 @@ export interface RemindersResponse {
 export interface CreateReminderRequest {
   text: string;
   dueAt: string | null;
+  repeat?: RepeatInput | null;
 }
 
 export interface UpdateReminderRequest {
   text?: string;
   dueAt?: string | null;
   status?: Exclude<ReminderStatus, 'suggested'>;
+  // null stops repeating.
+  repeat?: RepeatInput | null;
+}
+
+export type TermKind = 'person' | 'place' | 'business' | 'thing' | 'other';
+
+// A name the user mentions in recordings: who or what it is and how it was misheard.
+export interface Term {
+  id: string;
+  term: string;
+  kind: TermKind;
+  note: string;
+  variants: string[];
+  mentions: number;
+  source: 'auto' | 'user';
+  lastSeenAt: string;
+}
+
+export interface TermsResponse {
+  terms: Term[];
+}
+
+export interface TermResponse {
+  term: Term | null;
+}
+
+export interface SaveTermRequest {
+  term?: string;
+  kind?: TermKind;
+  note?: string;
+}
+
+export type InsightType =
+  | 'task'
+  | 'done'
+  | 'stopped'
+  | 'settled'
+  | 'expense'
+  | 'income'
+  | 'debt'
+  | 'receivable'
+  | 'measure';
+
+// One thing understood from a recording, e.g. "Έξοδο 70,00 € · Σέρβις Auris"; can be undone.
+export interface Insight {
+  type: InsightType;
+  label: string;
+  refId: string;
+  undone?: boolean;
+}
+
+export interface RecordingInsights {
+  chunkId: string;
+  sessionId: string;
+  startedAt: string;
+  items: Insight[];
+}
+
+export interface InsightsResponse {
+  recordings: RecordingInsights[];
+}
+
+export interface UndoInsightResponse {
+  items: Insight[];
 }

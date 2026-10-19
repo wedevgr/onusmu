@@ -3,7 +3,9 @@ import { supabase } from '../supabase';
 import type {
   BillingResponse,
   ChatRequest,
+  BriefingResponse,
   ChatResponse,
+  ChatStreamHandlers,
   Conversation,
   ConversationsResponse,
   CreateReminderRequest,
@@ -16,6 +18,11 @@ import type {
   OkResponse,
   Reminder,
   RemindersResponse,
+  InsightsResponse,
+  UndoInsightResponse,
+  SaveTermRequest,
+  TermResponse,
+  TermsResponse,
   SearchParams,
   SearchResponse,
   SettingsResponse,
@@ -112,6 +119,94 @@ async function request<T>(path: string, options: RequestOptions, retried = false
   return data as T;
 }
 
+/**
+ * POST /v1/chat/stream: server-sent events read with XMLHttpRequest, which (unlike fetch in
+ * React Native) delivers the response text while it is still arriving.
+ */
+async function streamChatRequest(
+  body: ChatRequest,
+  handlers: ChatStreamHandlers,
+  retried = false,
+): Promise<ChatResponse> {
+  const token = await getAccessToken();
+  if (!token) throw new ApiError('Έχεις αποσυνδεθεί.', 401);
+
+  const outcome = await new Promise<ChatResponse | 'unauthorized'>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let read = 0;
+    let finished = false;
+
+    const handleEvent = (block: string): void => {
+      const event = /^event: (.+)$/m.exec(block)?.[1];
+      const raw = /^data: (.*)$/m.exec(block)?.[1];
+      if (!event || raw === undefined) return;
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      if (event === 'start') handlers.onStart?.(String(data.conversationId));
+      else if (event === 'status') handlers.onStatus?.(String(data.text ?? ''));
+      else if (event === 'delta') handlers.onDelta?.(String(data.text ?? ''));
+      else if (event === 'done') {
+        finished = true;
+        resolve(data as unknown as ChatResponse);
+      } else if (event === 'error') {
+        finished = true;
+        reject(new ApiError(String(data.message ?? 'Δεν ήταν δυνατή η απάντηση.'), 500));
+      }
+    };
+
+    // Each event ends with a blank line; handle the complete ones received so far.
+    const consume = (): void => {
+      if (xhr.status !== 200) return;
+      const text = xhr.responseText;
+      let end = text.indexOf('\n\n', read);
+      while (end >= 0) {
+        handleEvent(text.slice(read, end));
+        read = end + 2;
+        end = text.indexOf('\n\n', read);
+      }
+    };
+
+    xhr.open('POST', `${config.apiUrl}/v1/chat/stream`);
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('Accept', 'text/event-stream');
+    // Setting onprogress is what makes React Native deliver the text incrementally.
+    xhr.onprogress = consume;
+    xhr.onload = () => {
+      if (xhr.status === 401 && !retried) {
+        resolve('unauthorized');
+        return;
+      }
+      if (xhr.status !== 200) {
+        let message: string | null = null;
+        try {
+          message = extractErrorMessage(JSON.parse(xhr.responseText));
+        } catch {
+          message = null;
+        }
+        reject(new ApiError(message ?? `Το αίτημα απέτυχε (${xhr.status}).`, xhr.status));
+        return;
+      }
+      consume();
+      if (!finished) reject(new ApiError('Η απάντηση διακόπηκε. Δοκίμασε ξανά.', 0));
+    };
+    xhr.onerror = () => reject(new ApiError('Σφάλμα δικτύου. Έλεγξε τη σύνδεσή σου.', 0));
+    xhr.send(JSON.stringify(body));
+  });
+
+  if (outcome !== 'unauthorized') return outcome;
+  const refreshed = await refreshAccessToken();
+  if (!refreshed) {
+    await supabase.auth.signOut();
+    throw new ApiError('Η σύνδεσή σου έληξε. Συνδέσου ξανά.', 401);
+  }
+  return streamChatRequest(body, handlers, true);
+}
+
 function buildQuery(params: object): string {
   const parts = Object.entries(params)
     .filter(
@@ -167,6 +262,8 @@ export const api = {
 
   getSettings: (): Promise<SettingsResponse> => request('/v1/settings', { method: 'GET' }),
 
+  getBriefings: (): Promise<BriefingResponse> => request('/v1/briefing', { method: 'GET' }),
+
   updateSettings: (patch: Partial<SettingsResponse>): Promise<SettingsResponse> =>
     request('/v1/settings', { method: 'PUT', body: patch }),
 
@@ -184,8 +281,30 @@ export const api = {
   deleteReminder: (id: string): Promise<OkResponse> =>
     request(`/v1/reminders/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
+  listInsights: (): Promise<InsightsResponse> => request('/v1/insights', { method: 'GET' }),
+
+  markInsightsSeen: (chunkIds: string[]): Promise<OkResponse> =>
+    request('/v1/insights/seen', { method: 'POST', body: { chunkIds } }),
+
+  undoInsight: (chunkId: string, index: number): Promise<UndoInsightResponse> =>
+    request('/v1/insights/undo', { method: 'POST', body: { chunkId, index } }),
+
+  listTerms: (): Promise<TermsResponse> => request('/v1/terms', { method: 'GET' }),
+
+  createTerm: (body: SaveTermRequest): Promise<TermResponse> =>
+    request('/v1/terms', { method: 'POST', body }),
+
+  updateTerm: (id: string, body: SaveTermRequest): Promise<TermResponse> =>
+    request(`/v1/terms/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
+
+  deleteTerm: (id: string): Promise<OkResponse> =>
+    request(`/v1/terms/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
   sendChat: (body: ChatRequest): Promise<ChatResponse> =>
     request('/v1/chat', { method: 'POST', body }),
+
+  streamChat: (body: ChatRequest, handlers: ChatStreamHandlers): Promise<ChatResponse> =>
+    streamChatRequest(body, handlers),
 
   listConversations: (): Promise<ConversationsResponse> =>
     request('/v1/chat/conversations', { method: 'GET' }),

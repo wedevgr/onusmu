@@ -1,15 +1,15 @@
-# AI Memory design reference
+# onusmu design reference
 
 How the app looks and why, so new screens match the existing ones. Every value here lives in code; when the two disagree, the code wins and this file should be updated.
 
 ## The look in one paragraph
 
-Dark glass. A near-black backdrop with two faint cool-grey glows, and translucent white panels with a thin light edge sitting on top of it. No colour except red for the microphone and red, green and amber for status. System font, Feather line icons, fully rounded pills for anything you tap or type in. The interface is in Greek.
+Dark glass. A near-black backdrop with two faint cool-grey glows, and translucent white panels with a thin light edge sitting on top of it. No colour except red for the microphone and red, green and amber for status. The launch and sign-in screens are the exception: the emblem's very dark green, with the chrome emblem small and unframed. System font, Feather line icons, fully rounded pills for anything you tap or type in. The interface is in Greek.
 
 ## Rules
 
 1. **Dark only.** `useTheme()` always returns the dark theme, whatever the phone is set to. The light theme still exists in the theme file but is unused.
-2. **Colour is for meaning.** Red means the microphone is live or something is destructive. Green and amber are sync and status. Everything else is white, grey or glass.
+2. **Colour is for meaning.** Red means the microphone is live or something is destructive. Green and amber are sync and status. Everything else is white, grey or glass. The brand green (`brand` in the theme) is only for the launch and sign-in screens.
 3. **Panels are glass.** Use `theme.glass` for any card, group, input or bubble. Do not hand-pick a background colour.
 4. **Never hard-code spacing, radius or colour.** Take them from `src/theme/index.ts`.
 5. **Greek copy, informal singular** ("Πάτα", "Δοκίμασε ξανά"). No dashes or bullet characters as decoration.
@@ -20,9 +20,11 @@ Dark glass. A near-black backdrop with two faint cool-grey glows, and translucen
 | What | File |
 | --- | --- |
 | Colours, spacing, radius, type, tab bar size | `src/theme/index.ts` |
-| Backdrop, safe areas, side margins, tab bar clearance | `src/components/Screen.tsx` |
+| Backdrop (glass or brand green), safe areas, side margins, tab bar clearance | `src/components/Screen.tsx` |
 | Floating animated tab bar | `src/components/GlassTabBar.tsx` |
-| Icons, round icon button, logo tile | `src/components/Icon.tsx` |
+| Icons, round icon button, chrome emblem (`Logo`) | `src/components/Icon.tsx` |
+| Launch screen (emblem fade, then dissolve) | `src/components/LaunchScreen.tsx` |
+| What a recording was understood as, with undo | `src/components/InsightList.tsx` |
 | Large screen title with optional buttons | `src/components/Header.tsx` |
 | Grouped rows (settings style) | `src/components/List.tsx` |
 | Buttons | `src/components/Button.tsx` |
@@ -52,6 +54,14 @@ Dark glass. A near-black backdrop with two faint cool-grey glows, and translucen
 | `warning` | `#F2B544` | Uploading, processing |
 
 `theme.glass` is the `surface` fill plus a 1pt `border` edge.
+
+Brand green, for the launch and sign-in screens only:
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `brand.green` | `#011A1A` | Launch screen and native splash (`app.json` splash `backgroundColor` must match) |
+| `brand.greenTop` / `brand.greenBottom` | `#022322` / `#060A0A` | Sign-in gradient, ending near the glass screens' black |
+| `brand.glow` | `150,225,210` | Faint mint light behind the emblem |
 
 ## Backdrop
 
@@ -120,7 +130,12 @@ A floating glass pill, 66pt tall, 16pt from the sides, at least 12pt above the b
 - **Search:** pill search field, results as glass cards with the text first and the time underneath.
 - **Chat:** questions in soft grey bubbles on the right, answers as plain text, source times as small tags (three shown, the rest behind "+N"), three dots while waiting.
 - **Settings:** list groups with a small caption above each. Destructive rows are red and sit last.
-- **Login:** centred logo tile, fields with a leading icon, one main button.
+- **Launch:** plain brand green, a 76pt chrome emblem fading and scaling in with a faint glow, then the whole layer dissolving into the first screen. The native splash is the same green with no image, so nothing large flashes.
+- **Login:** brand green backdrop, small emblem and "onusmu" at the top, a sliding Σύνδεση / Εγγραφή switch, Google first, then labelled fields with a focus edge and inline errors. "Ξέχασες τον κωδικό;" opens its own reset view with a back button. Errors and notices are banners with an icon.
+- **Home additions:** the mic button also works as hold to talk (release saves). After recordings are processed, a card "Κατάλαβα από τις καταγραφές σου" lists what was understood, each line with "Αναίρεση", and "OK" clears it.
+- **Search additions:** exact matches first with the matched words in bold, then "Σχετικά" results found by meaning, which load a moment later under their own caption.
+- **Chat additions:** while waiting, the typing dots carry a status line ("Ψάχνω στις καταγραφές σου…"); the answer then appears as it is written. Up to three follow-up questions sit under the latest answer as glass pills.
+- **Names (Ονόματα):** a sheet from Settings listing people, businesses, places and things by group, with how often each was heard and its misheard spellings; tap to edit inline.
 
 ## Wording
 
@@ -131,8 +146,12 @@ A floating glass pill, 66pt tall, 16pt from the sides, at least 12pt above the b
 | memory | μνήμη |
 | timeline | χρονολόγιο |
 | chat | συνομιλία |
+| task | εκκρεμότητα |
+| reminder | υπενθύμιση |
+| names list | ονόματα |
+| morning briefing | πρωινή ενημέρωση |
 
-Dates use the `el-GR` locale. Durations read "45 δευτ.", "12 λεπ.", "1 ώρ. 5 λεπ.". "AI Memory" stays in English as the product name.
+Dates use the `el-GR` locale. Durations read "45 δευτ.", "12 λεπ.", "1 ώρ. 5 λεπ.". "onusmu" is the product name, always lower case.
 
 ## Known limits
 

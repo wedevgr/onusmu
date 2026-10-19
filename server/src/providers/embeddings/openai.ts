@@ -13,6 +13,9 @@ export class OpenAIEmbeddings implements EmbeddingProvider {
     const res = await this.client.embeddings.create({
       model: config.EMBEDDING_MODEL,
       input: texts,
+      // text-embedding-3 models can shorten their vectors, so a larger model still fits the
+      // vector(1536) column; switching models then needs only `npm run reembed`.
+      ...(config.EMBEDDING_MODEL.startsWith('text-embedding-3') ? { dimensions: config.EMBEDDING_DIM } : {}),
     });
     return res.data
       .sort((a, b) => a.index - b.index)

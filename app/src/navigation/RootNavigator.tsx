@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { Linking, StyleSheet, View } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import {
   DarkTheme,
@@ -15,7 +15,7 @@ import {
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack';
 import { useAuthStore } from '../stores/auth';
-import { darkTheme, lightTheme, spacing, typography, useTheme } from '../theme';
+import { brand, darkTheme, lightTheme, useTheme } from '../theme';
 import AuthScreen from '../screens/AuthScreen';
 import HomeScreen from '../screens/HomeScreen';
 import RecordingScreen from '../screens/RecordingScreen';
@@ -25,9 +25,10 @@ import ChatScreen from '../screens/ChatScreen';
 import ChatHistoryScreen from '../screens/ChatHistoryScreen';
 import RemindersScreen from '../screens/RemindersScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import TermsScreen from '../screens/TermsScreen';
 import { GlassTabBar } from '../components/GlassTabBar';
-import { Screen } from '../components/Screen';
-import { Icon, Logo, type IconName } from '../components/Icon';
+import { LaunchScreen } from '../components/LaunchScreen';
+import { Icon, type IconName } from '../components/Icon';
 
 export type TimelineParams = {
   highlightChunkId?: string;
@@ -40,8 +41,13 @@ export type ChatParams = {
   conversationId?: string;
 };
 
+export type HomeParams = {
+  // Set (to a fresh value each time) to start recording on arrival, e.g. from a shortcut.
+  record?: number;
+};
+
 export type TabParamList = {
-  Home: undefined;
+  Home: HomeParams | undefined;
   Timeline: TimelineParams | undefined;
   Search: undefined;
   Chat: ChatParams | undefined;
@@ -54,6 +60,7 @@ export type RootStackParamList = {
   Recording: undefined;
   ChatHistory: undefined;
   Reminders: undefined;
+  Terms: undefined;
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -124,8 +131,10 @@ export default function RootNavigator(): React.JSX.Element {
   const session = useAuthStore((state) => state.session);
   const initialized = useAuthStore((state) => state.initialized);
   const [navReady, setNavReady] = useState(false);
+  const [launchDone, setLaunchDone] = useState(false);
 
-  // Tapping a reminder notification, including one that launched the app, opens Reminders.
+  // Tapping a notification, including one that launched the app: the morning briefing opens
+  // Home, a reminder opens Reminders.
   const notificationResponse = Notifications.useLastNotificationResponse();
   const [handledNotification, setHandledNotification] = useState<string | null>(null);
   useEffect(() => {
@@ -133,63 +142,77 @@ export default function RootNavigator(): React.JSX.Element {
     const id = notificationResponse.notification.request.identifier;
     if (id === handledNotification) return;
     setHandledNotification(id);
-    if (navigationRef.isReady()) navigationRef.navigate('Reminders');
+    if (!navigationRef.isReady()) return;
+    if (notificationResponse.notification.request.content.data?.kind === 'briefing') {
+      navigationRef.navigate('Main', { screen: 'Home' });
+    } else {
+      navigationRef.navigate('Reminders');
+    }
   }, [notificationResponse, navReady, session, handledNotification]);
 
+  // aimemory://record (from a Siri or home-screen shortcut) opens Home and starts recording.
+  // The link can arrive before sign-in finishes, so it waits until Home can take it.
+  const [pendingLink, setPendingLink] = useState<string | null>(null);
+  useEffect(() => {
+    void Linking.getInitialURL().then((url) => url && setPendingLink(url));
+    const subscription = Linking.addEventListener('url', ({ url }) => setPendingLink(url));
+    return () => subscription.remove();
+  }, []);
+  useEffect(() => {
+    if (!pendingLink || !navReady || session === null || !navigationRef.isReady()) return;
+    if (/^aimemory:\/\/\/?record\b/.test(pendingLink)) {
+      navigationRef.navigate('Main', { screen: 'Home', params: { record: Date.now() } });
+    }
+    setPendingLink(null);
+  }, [pendingLink, navReady, session]);
+
   return (
-    <NavigationContainer
-      ref={navigationRef}
-      onReady={() => setNavReady(true)}
-      theme={buildNavigationTheme(theme.dark)}
-    >
-      {!initialized ? (
-        <Screen>
-          <View style={styles.splash}>
-            <Logo size={72} />
-            <Text style={[typography.heading, styles.splashTitle, { color: theme.colors.text }]}>
-              onusmu
-            </Text>
-            <ActivityIndicator color={theme.colors.textMuted} />
-          </View>
-        </Screen>
-      ) : (
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          {session === null ? (
-            <Stack.Screen name="Auth" component={AuthScreen} />
-          ) : (
-            <>
-              <Stack.Screen name="Main" component={MainTabs} />
-              <Stack.Screen
-                name="Recording"
-                component={RecordingScreen}
-                options={{ animation: 'slide_from_bottom' }}
-              />
-              <Stack.Screen
-                name="ChatHistory"
-                component={ChatHistoryScreen}
-                options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
-              />
-              <Stack.Screen
-                name="Reminders"
-                component={RemindersScreen}
-                options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
-              />
-            </>
-          )}
-        </Stack.Navigator>
+    <View style={styles.root}>
+      <NavigationContainer
+        ref={navigationRef}
+        onReady={() => setNavReady(true)}
+        theme={buildNavigationTheme(theme.dark)}
+      >
+        {!initialized ? (
+          <View style={styles.root} />
+        ) : (
+          <Stack.Navigator screenOptions={{ headerShown: false }}>
+            {session === null ? (
+              <Stack.Screen name="Auth" component={AuthScreen} />
+            ) : (
+              <>
+                <Stack.Screen name="Main" component={MainTabs} />
+                <Stack.Screen
+                  name="Recording"
+                  component={RecordingScreen}
+                  options={{ animation: 'slide_from_bottom' }}
+                />
+                <Stack.Screen
+                  name="ChatHistory"
+                  component={ChatHistoryScreen}
+                  options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
+                />
+                <Stack.Screen
+                  name="Reminders"
+                  component={RemindersScreen}
+                  options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
+                />
+              </>
+            )}
+          </Stack.Navigator>
+        )}
+      </NavigationContainer>
+      {launchDone ? null : (
+        <LaunchScreen ready={initialized} onFinished={() => setLaunchDone(true)} />
       )}
-    </NavigationContainer>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  splash: {
+  // Brand green underneath everything, so nothing dark shows between splash and first screen.
+  root: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  splashTitle: {
-    marginTop: spacing.md,
-    marginBottom: spacing.lg,
+    backgroundColor: brand.green,
   },
 });

@@ -1,5 +1,12 @@
+export interface TranscriptionHints {
+  /** Text that steers spelling and continuity: known names and the end of the previous chunk. */
+  prompt?: string;
+  /** Names to favour, for providers that take a word list. */
+  terms?: string[];
+}
+
 export interface TranscriptionProvider {
-  transcribe(audio: Buffer, filename: string): Promise<string>;
+  transcribe(audio: Buffer, filename: string, hints?: TranscriptionHints): Promise<string>;
 }
 
 export interface EmbeddingProvider {
@@ -13,5 +20,12 @@ export interface ChatMessage {
 
 export interface LlmProvider {
   /** json: the reply must be a single JSON object. */
-  chat(messages: ChatMessage[], opts?: { temperature?: number; json?: boolean }): Promise<string>;
+  /** model overrides the configured LLM_MODEL for this call. */
+  chat(messages: ChatMessage[], opts?: { temperature?: number; json?: boolean; model?: string }): Promise<string>;
+  /** Like chat, calling onDelta with each piece of text as it is generated; resolves to the whole text. */
+  chatStream(
+    messages: ChatMessage[],
+    onDelta: (text: string) => void,
+    opts?: { temperature?: number; model?: string },
+  ): Promise<string>;
 }

@@ -10,6 +10,8 @@ import billingRoutes from './routes/billing';
 import chatRoutes from './routes/chat';
 import chunkRoutes from './routes/chunks';
 import reminderRoutes from './routes/reminders';
+import termRoutes from './routes/terms';
+import insightRoutes from './routes/insights';
 import searchRoutes from './routes/search';
 import sessionRoutes from './routes/sessions';
 import stripeWebhookRoutes from './routes/stripeWebhook';
@@ -66,6 +68,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       await authed.register(accountRoutes);
       await authed.register(billingRoutes);
       await authed.register(reminderRoutes);
+      await authed.register(termRoutes);
+      await authed.register(insightRoutes);
     },
     { prefix: '/v1' },
   );

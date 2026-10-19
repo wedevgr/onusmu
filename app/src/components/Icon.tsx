@@ -1,5 +1,5 @@
 import React from 'react';
-import { Image, Pressable, StyleSheet, View } from 'react-native';
+import { Image, Pressable, StyleSheet } from 'react-native';
 import Feather from '@expo/vector-icons/Feather';
 import { useTheme } from '../theme';
 
@@ -43,24 +43,14 @@ export function IconButton({
   );
 }
 
-// The emblem's own backdrop, shown while the image loads.
-const LOGO_BACKGROUND = '#013535';
-
-// The app mark: the chrome emblem on its teal tile, as on the app icon.
+// The app mark: the chrome emblem on transparency, so it sits directly on any backdrop.
 export function Logo({ size = 64 }: { size?: number }): React.JSX.Element {
   return (
-    <View
-      style={[
-        styles.logo,
-        {
-          width: size,
-          height: size,
-          borderRadius: size * 0.28,
-        },
-      ]}
-    >
-      <Image source={require('../../assets/logo.png')} style={{ width: size, height: size }} />
-    </View>
+    <Image
+      source={require('../../assets/emblem.png')}
+      style={{ width: size, height: size }}
+      accessibilityIgnoresInvertColors
+    />
   );
 }
 
@@ -71,9 +61,5 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  logo: {
-    overflow: 'hidden',
-    backgroundColor: LOGO_BACKGROUND,
   },
 });
