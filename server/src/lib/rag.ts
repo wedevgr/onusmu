@@ -8,6 +8,7 @@ import { describeTerms, expandWithVariants, loadTermsOrEmpty, topTerms, type Ter
 import { buildLedger, type Ledger } from './ledger';
 import { scanLiteral } from './scan';
 import { formatZonedClock, formatZonedGreek } from './zonedtime';
+import { groundedQuestions } from './groundedQuestions';
 import { getEmbeddingProvider, getLlmProvider } from '../providers';
 import type { ChatMessage } from '../providers/types';
 
@@ -260,6 +261,7 @@ Each excerpt is labeled [n] with the local day and time it was recorded.
 - Speak to the user in the second person ("χρωστάς", "πήγες"), even when the excerpt is their own words in the first person.
 - For a summary of a period, go in time order and group by part of the day.
 - If the excerpts do not answer the question, say so plainly in one sentence, mention the period you searched if there was one, and do not guess.
+- Never add advice, tips, ideas, next steps or anything else of your own ("μπορείς επίσης να…", "καλό θα ήταν…", "θέλεις να…;"). Only tell what the recordings and records say.
 - A list of names the user often mentions may be given; use it to say who or what someone is, but take facts only from the excerpts.
 - Earlier messages are the conversation so far; use them to understand follow-up questions.
 - Be concise and natural. Plain text only: no markdown, no headings, no bold. Short lines starting with "- " are fine for lists.
@@ -413,31 +415,25 @@ export function assertEmbeddingDim(dim: number): void {
   }
 }
 
-/** Two or three short questions the user might ask next, in Greek. Empty on any failure. */
-export async function suggestFollowUps(question: string, answer: string): Promise<string[]> {
-  try {
-    const raw = await getLlmProvider().chat(
-      [
-        {
-          role: 'system',
-          content:
-            'Suggest the next questions a user might ask their personal-memory assistant after this exchange. ' +
-            'Each one short (max 8 words), in Greek, different from the question asked, and about people, places, money, tasks or events that the answer mentions, so it can be answered from the same voice notes. Never ask about photos, files or anything a voice note cannot contain. ' +
-            'If the answer said nothing was found, suggest broader or related questions. ' +
-            'Output ONLY JSON: {"questions":["...","...","..."]}',
-        },
-        { role: 'user', content: `Question: ${question}\n\nAnswer: ${answer.slice(0, 1500)}` },
-      ],
-      { temperature: 0.5, json: true },
-    );
-    const list = (JSON.parse(raw) as { questions?: unknown }).questions;
-    return Array.isArray(list)
-      ? list
-          .filter((q): q is string => typeof q === 'string' && q.trim().length > 0)
-          .map((q) => q.trim().slice(0, 80))
-          .slice(0, 3)
-      : [];
-  } catch {
-    return [];
-  }
+/**
+ * Up to three questions to ask next, each answerable from the recordings this answer cited.
+ * None when the answer found nothing, so the app never points at things the memory lacks.
+ */
+export async function suggestFollowUps(
+  userId: string,
+  question: string,
+  answer: string,
+  citations: Citation[],
+): Promise<string[]> {
+  if (citations.length === 0) return [];
+  const timezone = await getUserTimezone(userId);
+  const excerpts = citations.map((c) => ({ label: formatZonedGreek(new Date(c.startedAt), timezone), text: c.text }));
+  return groundedQuestions(
+    excerpts,
+    `The user asked: ${question}
+The assistant answered: ${answer.slice(0, 1000)}
+` +
+      `Today is ${formatZonedGreek(new Date(), timezone)}. Suggest follow-up questions about other details in these excerpts that the answer did not already give.`,
+    [question],
+  );
 }

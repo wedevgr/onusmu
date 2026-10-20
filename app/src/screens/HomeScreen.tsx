@@ -133,6 +133,14 @@ export default function HomeScreen({ navigation, route }: Props): React.JSX.Elem
     return () => timers.forEach(clearTimeout);
   }, [lastStoppedAt, load]);
 
+  // Each uploaded chunk: reload now and again once it has likely been transcribed.
+  const lastUploadAt = useSyncStore((state) => state.lastUploadAt);
+  useEffect(() => {
+    if (!lastUploadAt) return;
+    const timers = [0, 6000, 15000].map((ms) => setTimeout(load, ms));
+    return () => timers.forEach(clearTimeout);
+  }, [lastUploadAt, load]);
+
   const dismissInsights = (): void => {
     const chunkIds = insights.map((r) => r.chunkId);
     setInsights([]);

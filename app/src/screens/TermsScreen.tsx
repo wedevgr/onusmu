@@ -19,6 +19,7 @@ import { Header } from '../components/Header';
 import { Icon, IconButton, type IconName } from '../components/Icon';
 import { ListGroup } from '../components/List';
 import { Screen, SCREEN_GUTTER } from '../components/Screen';
+import { useFocusedFieldVisible } from '../lib/keyboardScroll';
 import { radius, spacing, typography, useTheme } from '../theme';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -160,6 +161,7 @@ function TermEditor({ initial, saving, onSave, onCancel, onRemove }: EditorProps
 
 export default function TermsScreen(): React.JSX.Element {
   const theme = useTheme();
+  const fieldScroll = useFocusedFieldVisible();
   const navigation = useNavigation<NavigationProp>();
   const [terms, setTerms] = useState<Term[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -240,6 +242,7 @@ export default function TermsScreen(): React.JSX.Element {
       </View>
 
       <ScrollView
+        {...fieldScroll}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}

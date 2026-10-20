@@ -1,15 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { query } from '../db';
 import { ctx, decryptText } from '../lib/crypto';
-import { getLlmProvider } from '../providers';
+import { groundedQuestions } from '../lib/groundedQuestions';
 import { getUserTimezone } from '../lib/rag';
-import { formatZoned, formatZonedClock } from '../lib/zonedtime';
+import { formatZonedGreek } from '../lib/zonedtime';
 
-const DEFAULT_SUGGESTIONS = [
-  'Τι συζήτησα σήμερα;',
-  'Σύνοψε την πιο πρόσφατη καταγραφή μου',
-  'Τι είπα ότι πρέπει να κάνω;',
-];
+// Asked when the model suggests nothing usable; true whenever the user has any recording.
+const FALLBACK = 'Σύνοψε την πιο πρόσφατη καταγραφή μου';
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const cache = new Map<string, { at: number; suggestions: string[] }>();
@@ -18,20 +15,11 @@ interface RecentChunkRow {
   id: string;
   text: string;
   started_at: Date;
-  ended_at: Date;
-}
-
-function parseSuggestionList(raw: string): string[] {
-  const cleaned = raw.replace(/```(?:json)?/g, '').trim();
-  const parsed: unknown = JSON.parse(cleaned);
-  if (!Array.isArray(parsed)) return [];
-  return parsed
-    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    .map((item) => item.trim())
-    .slice(0, 3);
 }
 
 export default async function suggestionRoutes(app: FastifyInstance): Promise<void> {
+  // Questions to start a chat with, each answerable from the user's latest recordings.
+  // None for a user with no recordings: there is nothing to ask about yet.
   app.get('/suggestions', async (request) => {
     const userId = request.userId;
 
@@ -40,46 +28,31 @@ export default async function suggestionRoutes(app: FastifyInstance): Promise<vo
       return { suggestions: cached.suggestions };
     }
 
+    // The latest recordings, whenever they were: a quiet day still has something to ask about.
     const rows = await query<RecentChunkRow>(
-      `SELECT id, text, started_at, ended_at
+      `SELECT id, text, started_at
        FROM transcript_chunks
-       WHERE user_id = $1 AND text <> '' AND started_at > now() - interval '24 hours'
+       WHERE user_id = $1 AND text <> ''
        ORDER BY started_at DESC
        LIMIT 12`,
       [userId],
     );
 
-    if (rows.length === 0) {
-      return { suggestions: DEFAULT_SUGGESTIONS };
-    }
-
-    const timezone = await getUserTimezone(userId);
-    const excerpts = rows
-      .slice()
-      .reverse()
-      .map((r) => `[${formatZonedClock(r.started_at, timezone)}-${formatZonedClock(r.ended_at, timezone)}] ${decryptText(r.text, ctx.chunkText(userId, r.id))}`)
-      .join('\n');
-
-    let suggestions = DEFAULT_SUGGESTIONS;
-    try {
-      const raw = await getLlmProvider().chat(
-        [
-          {
-            role: 'user',
-            content:
-              `Current local time: ${formatZoned(new Date(), timezone)}.\n` +
-              `Here are transcript excerpts from the user's recordings of the last 24 hours:\n\n${excerpts}\n\n` +
-              'Propose exactly 3 short questions (max 12 words each) the user could ask their personal memory AI about these memories. ' +
-              'Write the questions in Greek (ελληνικά). ' +
-              'Output ONLY a JSON array of 3 strings, e.g. ["Ερώτηση ένα;","Ερώτηση δύο;","Ερώτηση τρία;"]',
-          },
-        ],
-        { temperature: 0.7 },
+    let suggestions: string[] = [];
+    if (rows.length > 0) {
+      const timezone = await getUserTimezone(userId);
+      const excerpts = rows
+        .slice()
+        .reverse()
+        .map((r) => ({
+          label: formatZonedGreek(r.started_at, timezone),
+          text: decryptText(r.text, ctx.chunkText(userId, r.id)),
+        }));
+      suggestions = await groundedQuestions(
+        excerpts,
+        `Today is ${formatZonedGreek(new Date(), timezone)}. Suggest 3 questions the user could start a chat with about these recent recordings.`,
       );
-      suggestions = parseSuggestionList(raw);
-      if (suggestions.length === 0) suggestions = DEFAULT_SUGGESTIONS;
-    } catch {
-      suggestions = DEFAULT_SUGGESTIONS;
+      if (suggestions.length === 0) suggestions = [FALLBACK];
     }
 
     cache.set(userId, { at: Date.now(), suggestions });

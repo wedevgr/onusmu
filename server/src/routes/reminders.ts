@@ -7,6 +7,7 @@ import { AppError } from '../lib/errors';
 import { getUserTimezone } from '../lib/rag';
 import { completeReminder, ruleFromInput } from '../lib/reminderOps';
 import { describeRepeat, nextOccurrence, scheduleCount, upcoming, type Repeat } from '../lib/recurrence';
+import { forgetReminderMeta, reminderMeta } from '../lib/reminderTags';
 
 // A repeat as the app sends it: only the frequency is required, the rest comes from the date.
 const repeatSchema = z
@@ -67,6 +68,17 @@ function toReminder(userId: string, row: ReminderRow, timezone: string) {
   };
 }
 
+type ReminderOut = ReturnType<typeof toReminder>;
+
+/** Adds the tags and money to listed reminders, tagging the new ones. */
+async function withTags(userId: string, reminders: ReminderOut[]) {
+  const metas = await reminderMeta(
+    userId,
+    reminders.map((r) => ({ id: r.id, text: r.text })),
+  );
+  return reminders.map((r) => ({ ...r, tags: metas.get(r.id)?.tags ?? [], money: metas.get(r.id)?.money ?? null }));
+}
+
 export default async function reminderRoutes(app: FastifyInstance): Promise<void> {
   // Suggestions and open reminders, plus what was finished in the last week.
   app.get('/reminders', async (request) => {
@@ -82,7 +94,7 @@ export default async function reminderRoutes(app: FastifyInstance): Promise<void
       ),
       getUserTimezone(request.userId),
     ]);
-    return { reminders: rows.map((row) => toReminder(request.userId, row, timezone)) };
+    return { reminders: await withTags(request.userId, rows.map((row) => toReminder(request.userId, row, timezone))) };
   });
 
   app.post('/reminders', async (request) => {
@@ -105,7 +117,8 @@ export default async function reminderRoutes(app: FastifyInstance): Promise<void
       ],
     );
     if (!row) throw new AppError(500, 'Failed to create reminder');
-    return toReminder(request.userId, row, timezone);
+    const [created] = await withTags(request.userId, [toReminder(request.userId, row, timezone)]);
+    return created;
   });
 
   app.patch('/reminders/:id', async (request) => {
@@ -161,7 +174,10 @@ export default async function reminderRoutes(app: FastifyInstance): Promise<void
       ],
     );
     if (!row) throw new AppError(404, 'Reminder not found');
-    return toReminder(userId, row, timezone);
+    // New words may need new tags.
+    if (body.text !== undefined) await forgetReminderMeta(userId, id);
+    const [updated] = await withTags(userId, [toReminder(userId, row, timezone)]);
+    return updated;
   });
 
   app.delete('/reminders/:id', async (request) => {

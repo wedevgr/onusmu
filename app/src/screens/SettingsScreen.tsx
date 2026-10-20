@@ -1,15 +1,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { api } from '../api/client';
 import type { SessionSummary } from '../api/types';
 import { refreshBriefings } from '../lib/briefing';
+import { disableCalendarSync, enableCalendarSync, isCalendarSyncEnabled } from '../lib/calendarSync';
 import { ensureNotificationPermission } from '../lib/notifications';
 import * as outbox from '../lib/outbox';
 import { triggerSync } from '../lib/sync';
 import { useAuthStore } from '../stores/auth';
+import { useRemindersStore } from '../stores/reminders';
 import { PLAN_NAMES, usageLine, useBillingStore } from '../stores/billing';
 import { useSettingsStore } from '../stores/settings';
 import { useSyncStore, selectSyncStatus } from '../stores/sync';
@@ -44,6 +46,35 @@ export default function SettingsScreen(): React.JSX.Element {
   // null until loaded, or when the server is too old to have the briefing.
   const [briefingEnabled, setBriefingEnabled] = useState<boolean | null>(null);
   const [briefingTime, setBriefingTime] = useState('08:30');
+  const [calendarOn, setCalendarOn] = useState(false);
+
+  useEffect(() => {
+    void isCalendarSyncEnabled().then(setCalendarOn);
+  }, []);
+
+  const toggleCalendar = (value: boolean): void => {
+    setCalendarOn(value);
+    if (!value) {
+      void disableCalendarSync();
+      return;
+    }
+    void enableCalendarSync(useRemindersStore.getState().reminders).then((result) => {
+      if (result === 'enabled') return;
+      setCalendarOn(false);
+      if (result === 'denied') {
+        Alert.alert(
+          'Χρειάζεται πρόσβαση στο ημερολόγιο',
+          'Επίτρεψε στο Onusmu το ημερολόγιο από τις ρυθμίσεις του κινητού.',
+          [
+            { text: 'Άκυρο', style: 'cancel' },
+            { text: 'Ρυθμίσεις', onPress: () => void Linking.openSettings() },
+          ],
+        );
+      } else {
+        Alert.alert('Δεν ενεργοποιήθηκε', 'Το ημερολόγιο δεν ήταν διαθέσιμο. Δοκίμασε ξανά.');
+      }
+    });
+  };
 
   const loadSessions = useCallback(() => {
     api
@@ -286,6 +317,20 @@ export default function SettingsScreen(): React.JSX.Element {
             subtitle="Άτομα, μέρη και επιχειρήσεις που αναφέρεις."
             chevron
             onPress={() => rootNav.navigate('Terms')}
+          />
+          <ListRow
+            icon="calendar"
+            title="Στο ημερολόγιο του κινητού"
+            subtitle="Οι εκκρεμότητες με ώρα μπαίνουν σε δικό τους ημερολόγιο «Onusmu»."
+            right={
+              <Switch
+                value={calendarOn}
+                onValueChange={toggleCalendar}
+                trackColor={{ false: theme.colors.surfaceMuted, true: theme.colors.success }}
+                thumbColor="#FFFFFF"
+                ios_backgroundColor={theme.colors.surfaceMuted}
+              />
+            }
           />
         </ListGroup>
 

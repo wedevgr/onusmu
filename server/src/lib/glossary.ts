@@ -100,7 +100,13 @@ export function describeTerms(terms: Term[]): string {
 export function transcriptionPrompt(terms: Term[], previousText: string): string {
   const names = topTerms(terms, 40).map((t) => t.term);
   const tail = previousText.trim().slice(-300);
-  return [names.length > 0 ? `Ονόματα: ${names.join(', ')}.` : '', tail].filter(Boolean).join('\n');
+  return [
+    'Προσωπική φωνητική σημείωση στα ελληνικά.',
+    names.length > 0 ? `Ονόματα: ${names.join(', ')}.` : '',
+    tail,
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 /** Words to search for as well: each query word that names a term brings its other spellings. */
@@ -159,6 +165,7 @@ text:
 terms: proper names that appear in THIS transcript: people, named businesses and shops, named places, brands, products and vehicle models.
 - Only proper names, as spoken in this transcript. Never list a KNOWN NAME that is not in this transcript.
 - Not common nouns (ταβέρνα, γιατρός, δουλειά, σχολείο, εκκλησία), not job titles, not days, months or dates, not the speaker. When unsure whether a word is a name, leave it out.
+- Leave out names from a line that does not fit the rest of the note (a stray English or foreign phrase, a subtitle or video credit): those are the transcriber guessing at background noise.
 - term: the canonical spelling in the nominative (e.g. "Πατάρας", "Θεοδόρα", "Άγιος Αθανάσιος"); reuse a KNOWN NAMES spelling for the same name.
 - note: what it is in a few Greek words, only if THIS transcript says so (e.g. "συνεργείο αυτοκινήτου", "κλειδαράς", "πελάτης στη Δράμα"); otherwise "".
 - variants: other spellings of this name that appear in the ORIGINAL transcript, if any.`;

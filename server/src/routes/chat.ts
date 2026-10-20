@@ -131,7 +131,7 @@ export default async function chatRoutes(app: FastifyInstance): Promise<void> {
       });
       const [messageId, followUps] = await Promise.all([
         saveAnswer(userId, conversationId, answer, citations),
-        suggestFollowUps(body.message, answer),
+        suggestFollowUps(userId, body.message, answer, citations),
       ]);
       send('done', { conversationId, messageId, answer, citations, followUps });
     } catch (err) {

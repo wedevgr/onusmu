@@ -5,19 +5,24 @@ interface SyncState {
   entries: OutboxEntry[];
   uploading: boolean;
   hydrated: boolean;
+  // When a chunk last reached the server; screens reload on it.
+  lastUploadAt: number;
 }
 
 interface SyncActions {
   hydrate: (entries: OutboxEntry[]) => void;
   setUploading: (uploading: boolean) => void;
+  markUploaded: () => void;
 }
 
 export const useSyncStore = create<SyncState & SyncActions>((set) => ({
   entries: [],
   uploading: false,
   hydrated: false,
+  lastUploadAt: 0,
   hydrate: (entries) => set({ entries, hydrated: true }),
   setUploading: (uploading) => set({ uploading }),
+  markUploaded: () => set({ lastUploadAt: Date.now() }),
 }));
 
 export interface SyncStatus {

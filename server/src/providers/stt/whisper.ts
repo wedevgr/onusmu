@@ -35,9 +35,14 @@ export class WhisperTranscription implements TranscriptionProvider {
     }
     const data = (await res.json()) as { text?: string };
     const text = (data.text ?? '').trim();
-    return HALLUCINATIONS.some((re) => re.test(text)) && text.length < 80 ? '' : text;
+    if (HALLUCINATIONS.some((re) => re.test(text)) && text.length < 80) return '';
+    // Forced to Greek, a short line with no Greek letter is the model guessing at noise.
+    if (config.STT_LANGUAGE === 'el' && !GREEK_LETTER.test(text) && text.length < 80) return '';
+    return text;
   }
 }
+
+const GREEK_LETTER = /[Ͱ-Ͽἀ-῿]/;
 
 function toArrayBuffer(buffer: Buffer): ArrayBuffer {
   return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;

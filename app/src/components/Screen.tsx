@@ -88,15 +88,25 @@ export function Screen({
   const rootRef = React.useRef<View>(null);
   // How far the keyboard reaches over this screen; null while the keyboard is closed.
   const [keyboardInset, setKeyboardInset] = React.useState<number | null>(null);
+  const navigationBar = React.useRef(insets.bottom);
+  navigationBar.current = insets.bottom;
 
   // Android draws edge to edge, so the window no longer shrinks for the keyboard and the
-  // screen has to make room itself. Measuring the overlap rather than taking the keyboard
-  // height keeps this right on a device that does still resize the window.
+  // screen has to make room itself. On iOS the overlap is measured, which also covers a
+  // screen that does not reach the bottom.
   React.useEffect(() => {
     // Measuring is asynchronous, so a late result must not reopen a keyboard that has closed.
     let visible = false;
     const onShow = (event: KeyboardEvent): void => {
       visible = true;
+      if (Platform.OS === 'android') {
+        // React Native reports the keyboard without the navigation bar under it, and
+        // measureInWindow and screenY disagree by the status bar, so measuring left the
+        // fields partly covered. Every screen reaches the bottom edge, so the keyboard
+        // covers its full height: the reported height plus the navigation bar.
+        setKeyboardInset(event.endCoordinates.height + navigationBar.current);
+        return;
+      }
       const keyboardTop = event.endCoordinates.screenY;
       rootRef.current?.measureInWindow((_x, y, _width, height) => {
         if (!visible) return;
@@ -136,7 +146,7 @@ export function Screen({
   // With the keyboard up the tab bar is hidden or covered, so only the keyboard needs room.
   const paddingBottom =
     keyboardInset !== null
-      ? keyboardInset + spacing.sm
+      ? keyboardInset + spacing.md
       : insideTabs
         ? Math.max(insets.bottom, tabBar.gap) + tabBar.height + spacing.sm
         : bottomInset

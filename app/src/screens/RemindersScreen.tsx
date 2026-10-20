@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Platform,
@@ -14,13 +14,15 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useShallow } from 'zustand/react/shallow';
 import type { RootStackParamList } from '../navigation/RootNavigator';
-import type { Reminder, RepeatFrequency, UpdateReminderRequest } from '../api/types';
+import type { Reminder, ReminderTag, RepeatFrequency, UpdateReminderRequest } from '../api/types';
 import { formatDueLabel } from '../lib/time';
 import { EmptyState } from '../components/EmptyState';
 import { Header } from '../components/Header';
-import { Icon, IconButton } from '../components/Icon';
+import { Icon, IconButton, type IconName } from '../components/Icon';
 import { ListGroup } from '../components/List';
 import { Screen, SCREEN_GUTTER } from '../components/Screen';
+import { useFocusedFieldVisible } from '../lib/keyboardScroll';
+import { TAG_INFO, formatMoney, moneySummary, tagCounts, type MoneySummary } from '../lib/reminderTags';
 import { selectDone, selectOpen, selectSuggested, useRemindersStore } from '../stores/reminders';
 import { radius, spacing, typography, useTheme } from '../theme';
 
@@ -63,6 +65,7 @@ function failed(title: string) {
 
 export default function RemindersScreen(): React.JSX.Element {
   const theme = useTheme();
+  const fieldScroll = useFocusedFieldVisible();
   const navigation = useNavigation<NavigationProp>();
   const suggested = useRemindersStore(useShallow(selectSuggested));
   const open = useRemindersStore(useShallow(selectOpen));
@@ -76,6 +79,7 @@ export default function RemindersScreen(): React.JSX.Element {
   const [repeatFreq, setRepeatFreq] = useState<RepeatFrequency | null>(null);
   const [iosPickerOpen, setIosPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [filter, setFilter] = useState<ReminderTag | null>(null);
 
   useEffect(() => {
     void useRemindersStore.getState().refresh();
@@ -159,6 +163,27 @@ export default function RemindersScreen(): React.JSX.Element {
     ]);
   };
 
+  // Groups come from what is still to do; finished ones only follow the filter.
+  const active = useMemo(() => [...suggested, ...open], [suggested, open]);
+  const tags = useMemo(() => tagCounts(active).filter((t) => t.tag !== 'money'), [active]);
+  const moneyCount = useMemo(() => active.filter((r) => r.money).length, [active]);
+  const money = useMemo(() => moneySummary(active), [active]);
+  // The money filter appears only while something is about money.
+  const showFilters = moneyCount > 0 || tags.length >= 2;
+  // A filter whose last reminder was finished falls back to all.
+  const activeFilter =
+    filter === 'money'
+      ? moneyCount > 0
+        ? filter
+        : null
+      : filter && tags.some((t) => t.tag === filter)
+        ? filter
+        : null;
+  const matches = (r: Reminder): boolean => activeFilter === null || (r.tags ?? []).includes(activeFilter);
+  const shownSuggested = suggested.filter(matches);
+  const shownOpen = open.filter(matches);
+  const shownDone = done.filter(matches);
+
   const canAdd = !saving && text.trim().length > 0;
   const nothingYet = loaded && suggested.length === 0 && open.length === 0 && done.length === 0;
 
@@ -202,6 +227,24 @@ export default function RemindersScreen(): React.JSX.Element {
     );
   };
 
+  // The reminder's groups, leaving out the one being filtered by.
+  const tagLine = (reminder: Reminder): React.JSX.Element | null => {
+    const shown = (reminder.tags ?? []).filter((tag) => tag !== activeFilter && tag !== 'money');
+    if (shown.length === 0) return null;
+    return (
+      <View style={styles.tagLine}>
+        {shown.map((tag) => (
+          <View key={tag} style={styles.tagItem}>
+            <Icon name={TAG_INFO[tag].icon} size={11} color={theme.colors.textFaint} />
+            <Text style={[typography.caption, styles.tagText, { color: theme.colors.textFaint }]}>
+              {TAG_INFO[tag].label}
+            </Text>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
   return (
     <Screen padded={false}>
       <View style={styles.header}>
@@ -212,6 +255,7 @@ export default function RemindersScreen(): React.JSX.Element {
       </View>
 
       <ScrollView
+        {...fieldScroll}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -302,14 +346,52 @@ export default function RemindersScreen(): React.JSX.Element {
           <Text style={[typography.caption, styles.error, { color: theme.colors.danger }]}>{error}</Text>
         ) : null}
 
-        {suggested.length > 0 ? (
+        {showFilters ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            style={styles.filterBar}
+            contentContainerStyle={[styles.chips, styles.filterChips]}
+          >
+            <FilterChip
+              label="Όλες"
+              count={active.length}
+              selected={activeFilter === null}
+              onPress={() => setFilter(null)}
+            />
+            {moneyCount > 0 ? (
+              <FilterChip
+                money
+                label={TAG_INFO.money.label}
+                count={moneyCount}
+                selected={activeFilter === 'money'}
+                onPress={() => setFilter(activeFilter === 'money' ? null : 'money')}
+              />
+            ) : null}
+            {tags.map(({ tag, count }) => (
+              <FilterChip
+                key={tag}
+                icon={TAG_INFO[tag].icon}
+                label={TAG_INFO[tag].label}
+                count={count}
+                selected={activeFilter === tag}
+                onPress={() => setFilter(activeFilter === tag ? null : tag)}
+              />
+            ))}
+          </ScrollView>
+        ) : null}
+
+        {activeFilter === 'money' ? <MoneyCard summary={money} /> : null}
+
+        {shownSuggested.length > 0 ? (
           <>
             <SectionLabel
               title="Από τις καταγραφές σου"
               note="Πράγματα που είπες ότι πρέπει να κάνεις. Κράτησε όσα θέλεις."
             />
             <ListGroup>
-              {suggested.map((reminder, index) => (
+              {shownSuggested.map((reminder, index) => (
                 <View
                   key={reminder.id}
                   style={[styles.row, index > 0 && { borderTopColor: theme.colors.border, borderTopWidth: StyleSheet.hairlineWidth }]}
@@ -318,7 +400,9 @@ export default function RemindersScreen(): React.JSX.Element {
                   <View style={styles.rowText}>
                     <Text style={[typography.body, { color: theme.colors.text }]}>{reminder.text}</Text>
                     {dueText(reminder)}
+                    {tagLine(reminder)}
                   </View>
+                  <AmountPill reminder={reminder} />
                   <IconButton
                     name="x"
                     label="Απόρριψη"
@@ -337,11 +421,11 @@ export default function RemindersScreen(): React.JSX.Element {
           </>
         ) : null}
 
-        {open.length > 0 ? (
+        {shownOpen.length > 0 ? (
           <>
             <SectionLabel title="Επόμενες" />
             <ListGroup>
-              {open.map((reminder, index) => (
+              {shownOpen.map((reminder, index) => (
                 <Pressable
                   key={reminder.id}
                   onLongPress={() => remove(reminder)}
@@ -351,7 +435,9 @@ export default function RemindersScreen(): React.JSX.Element {
                   <View style={styles.rowText}>
                     <Text style={[typography.body, { color: theme.colors.text }]}>{reminder.text}</Text>
                     {dueText(reminder)}
+                    {tagLine(reminder)}
                   </View>
+                  <AmountPill reminder={reminder} />
                   <IconButton
                     name="trash-2"
                     label="Διαγραφή"
@@ -365,11 +451,11 @@ export default function RemindersScreen(): React.JSX.Element {
           </>
         ) : null}
 
-        {done.length > 0 ? (
+        {shownDone.length > 0 ? (
           <>
             <SectionLabel title="Ολοκληρώθηκαν" />
             <ListGroup>
-              {done.map((reminder, index) => (
+              {shownDone.map((reminder, index) => (
                 <View
                   key={reminder.id}
                   style={[styles.row, index > 0 && { borderTopColor: theme.colors.border, borderTopWidth: StyleSheet.hairlineWidth }]}
@@ -450,6 +536,161 @@ function Chip({
   );
 }
 
+function FilterChip({
+  label,
+  count,
+  selected,
+  onPress,
+  icon,
+  money = false,
+}: {
+  label: string;
+  count: number;
+  selected: boolean;
+  onPress: () => void;
+  icon?: IconName;
+  money?: boolean;
+}): React.JSX.Element {
+  const theme = useTheme();
+  const color = selected ? theme.colors.onPrimary : theme.colors.text;
+  // Money stays green while not selected, so it is easy to spot.
+  const tint = money && !selected ? theme.colors.success : color;
+  const idleBackground = money ? withAlpha(theme.colors.success, 0.12) : 'transparent';
+  const idleBorder = money ? withAlpha(theme.colors.success, 0.45) : theme.colors.border;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      accessibilityLabel={`${label}, ${count}`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.chip,
+        {
+          backgroundColor: selected ? theme.colors.primary : idleBackground,
+          borderColor: selected ? theme.colors.primary : idleBorder,
+          opacity: pressed ? 0.7 : 1,
+        },
+      ]}
+    >
+      {money ? (
+        <Text style={[styles.euro, { color: tint }]}>€</Text>
+      ) : icon ? (
+        <Icon name={icon} size={14} color={tint} />
+      ) : null}
+      <Text style={[typography.caption, styles.chipLabel, { color: tint }]}>{label}</Text>
+      <Text
+        style={[
+          typography.caption,
+          styles.chipCount,
+          { color: selected ? theme.colors.onPrimary : theme.colors.textFaint },
+        ]}
+      >
+        {count}
+      </Text>
+    </Pressable>
+  );
+}
+
+interface MoneyColumn {
+  key: string;
+  label: string;
+  amount: number;
+  count: number;
+  color: string;
+  icon: IconName;
+}
+
+// What is still to pay and to collect, shown under the money filter.
+function MoneyCard({ summary }: { summary: MoneySummary }): React.JSX.Element {
+  const theme = useTheme();
+  const columns: MoneyColumn[] = [];
+  if (summary.payCount > 0 || summary.receiveCount === 0) {
+    columns.push({
+      key: 'pay',
+      label: 'Να πληρώσεις',
+      amount: summary.pay,
+      count: summary.payCount,
+      color: theme.colors.warning,
+      icon: 'arrow-up-right',
+    });
+  }
+  if (summary.receiveCount > 0) {
+    columns.push({
+      key: 'receive',
+      label: 'Να εισπράξεις',
+      amount: summary.receive,
+      count: summary.receiveCount,
+      color: theme.colors.success,
+      icon: 'arrow-down-left',
+    });
+  }
+  return (
+    <View style={[styles.moneyCard, theme.glass]}>
+      <View style={styles.moneyColumns}>
+        {columns.map((column, index) => (
+          <View
+            key={column.key}
+            style={[
+              styles.moneyColumn,
+              index > 0 && {
+                borderLeftColor: theme.colors.border,
+                borderLeftWidth: StyleSheet.hairlineWidth,
+                paddingLeft: spacing.md,
+              },
+            ]}
+          >
+            <View style={styles.moneyLabelRow}>
+              <View style={[styles.moneyIcon, { backgroundColor: withAlpha(column.color, 0.16) }]}>
+                <Icon name={column.icon} size={12} color={column.color} />
+              </View>
+              <Text style={[typography.caption, { color: theme.colors.textMuted }]}>{column.label}</Text>
+            </View>
+            <Text
+              style={[styles.moneyAmount, { color: theme.colors.text }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+            >
+              {formatMoney(column.amount, summary.currency)}
+            </Text>
+            <Text style={[typography.caption, { color: theme.colors.textFaint }]}>
+              {column.count === 1 ? '1 εκκρεμότητα' : `${column.count} εκκρεμότητες`}
+            </Text>
+          </View>
+        ))}
+      </View>
+      {summary.unpriced > 0 ? (
+        <Text style={[typography.caption, styles.moneyNote, { color: theme.colors.textFaint }]}>
+          {summary.unpriced === 1 ? 'Και 1 χωρίς ποσό.' : `Και ${summary.unpriced} χωρίς ποσό.`}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+// "−120 €" to pay or "+50 €" to collect, beside a money reminder.
+function AmountPill({ reminder }: { reminder: Reminder }): React.JSX.Element | null {
+  const theme = useTheme();
+  const money = reminder.money;
+  if (!money || money.amount === null) return null;
+  const receive = money.direction === 'receive';
+  const color = receive ? theme.colors.success : theme.colors.warning;
+  return (
+    <View style={[styles.amountPill, { backgroundColor: withAlpha(color, 0.14) }]}>
+      <Text style={[typography.caption, styles.amountText, { color }]} numberOfLines={1}>
+        {`${receive ? '+' : '−'}${formatMoney(money.amount, money.currency)}`}
+      </Text>
+    </View>
+  );
+}
+
+// "#3DD68C" at the given opacity; colours that are not six-digit hex pass through.
+function withAlpha(hex: string, alpha: number): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (!match) return hex;
+  const n = parseInt(match[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+
 function CheckCircle({ checked, onPress }: { checked: boolean; onPress: () => void }): React.JSX.Element {
   const theme = useTheme();
   return (
@@ -504,6 +745,79 @@ const styles = StyleSheet.create({
   },
   chipLabel: {
     fontWeight: '600',
+  },
+  chipCount: {
+    fontVariant: ['tabular-nums'],
+  },
+  euro: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  // Runs to the screen edges so chips scroll out of view instead of being cut at the gutter.
+  filterBar: {
+    marginTop: spacing.md,
+    marginHorizontal: -SCREEN_GUTTER,
+  },
+  filterChips: {
+    paddingHorizontal: SCREEN_GUTTER,
+  },
+  moneyCard: {
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginTop: spacing.sm,
+  },
+  moneyColumns: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  moneyColumn: {
+    flex: 1,
+    gap: 4,
+  },
+  moneyLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  moneyIcon: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  moneyAmount: {
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.5,
+  },
+  moneyNote: {
+    marginTop: spacing.sm,
+  },
+  amountPill: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  amountText: {
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  tagLine: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 3,
+  },
+  tagItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  tagText: {
+    fontSize: 12,
   },
   addButton: {
     alignItems: 'center',

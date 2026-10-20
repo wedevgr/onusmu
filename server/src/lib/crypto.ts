@@ -95,6 +95,8 @@ export const ctx = {
     `message.citation|${userId}|${messageId}`,
   reminderText: (userId: string, reminderId: string): EncryptionContext =>
     `reminder.text|${userId}|${reminderId}`,
+  reminderMeta: (userId: string, reminderId: string): EncryptionContext =>
+    `reminder.meta|${userId}|${reminderId}`,
   factData: (userId: string, factId: string): EncryptionContext => `fact.data|${userId}|${factId}`,
   chunkInsights: (userId: string, chunkId: string): EncryptionContext =>
     `chunk.insights|${userId}|${chunkId}`,

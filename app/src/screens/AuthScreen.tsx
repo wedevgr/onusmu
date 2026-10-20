@@ -17,6 +17,7 @@ import { isSupabaseConfigured } from '../config';
 import { Button } from '../components/Button';
 import { Icon, Logo, type IconName } from '../components/Icon';
 import { Screen } from '../components/Screen';
+import { useFocusedFieldVisible } from '../lib/keyboardScroll';
 import { radius, spacing, typography, useTheme } from '../theme';
 
 type Mode = 'login' | 'register' | 'reset';
@@ -194,6 +195,7 @@ function ModeSwitch({
 
 export default function AuthScreen(): React.JSX.Element {
   const theme = useTheme();
+  const fieldScroll = useFocusedFieldVisible();
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -285,6 +287,7 @@ export default function AuthScreen(): React.JSX.Element {
   return (
     <Screen backdrop="brand">
       <ScrollView
+        {...fieldScroll}
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}

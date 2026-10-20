@@ -224,6 +224,20 @@ export interface Reminder {
   repeatLabel?: string | null;
   // The next dates to notify, starting with dueAt.
   upcoming?: string[];
+  // Groups the server gave it; missing on older servers.
+  tags?: ReminderTag[];
+  // Set when the reminder is about paying or collecting money.
+  money?: ReminderMoney | null;
+}
+
+export type ReminderTag = 'money' | 'work' | 'home' | 'car' | 'health' | 'family' | 'shopping' | 'errands';
+
+export interface ReminderMoney {
+  // Null when no amount was said.
+  amount: number | null;
+  currency: string;
+  // pay: the user pays. receive: someone pays the user.
+  direction: 'pay' | 'receive';
 }
 
 export interface RemindersResponse {

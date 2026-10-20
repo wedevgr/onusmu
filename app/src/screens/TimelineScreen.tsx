@@ -20,6 +20,7 @@ import { ChunkStatusBadge } from '../components/ChunkStatusBadge';
 import { InsightList } from '../components/InsightList';
 import { EmptyState } from '../components/EmptyState';
 import { Header } from '../components/Header';
+import { useSyncStore } from '../stores/sync';
 import { Icon, IconButton } from '../components/Icon';
 import { Screen, SCREEN_GUTTER } from '../components/Screen';
 import { radius, spacing, typography, useTheme } from '../theme';
@@ -54,8 +55,9 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
     }
   }, [route.params]);
 
-  const load = useCallback(async (): Promise<void> => {
-    setLoading(true);
+  // Silent reloads (background refresh) keep the list on screen instead of the spinner.
+  const load = useCallback(async (silent = false): Promise<void> => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       // dayOffset counts days back from today; the time helpers count forward.
@@ -79,15 +81,16 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
           return api.listChunks(params);
         })(),
       ]);
+      // Newest recording first; the parts inside each recording stay in the order spoken.
       const sortedSessions = [...sessionsResponse.sessions].sort((a, b) =>
-        a.startedAt.localeCompare(b.startedAt),
+        b.startedAt.localeCompare(a.startedAt),
       );
       setSessions(sortedSessions);
       setChunks(
         [...chunksResponse.chunks].sort((a, b) => a.startedAt.localeCompare(b.startedAt)),
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Δεν φορτώθηκε το χρονολόγιο.');
+      if (!silent) setError(e instanceof Error ? e.message : 'Δεν φορτώθηκε το χρονολόγιο.');
     } finally {
       setLoading(false);
     }
@@ -98,9 +101,23 @@ export default function TimelineScreen({ navigation, route }: Props): React.JSX.
   }, [load]);
 
   useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => void load());
+    const unsubscribe = navigation.addListener('focus', () => void load(true));
     return unsubscribe;
   }, [navigation, load]);
+
+  // A new chunk reached the server: show it without leaving the screen.
+  const lastUploadAt = useSyncStore((state) => state.lastUploadAt);
+  useEffect(() => {
+    if (lastUploadAt) void load(true);
+  }, [lastUploadAt, load]);
+
+  // Keep checking while anything is still being transcribed, so its text appears by itself.
+  const processing = chunks.some((c) => c.processingStatus !== 'completed' && c.processingStatus !== 'failed');
+  useEffect(() => {
+    if (!processing) return;
+    const interval = setInterval(() => void load(true), 4000);
+    return () => clearInterval(interval);
+  }, [processing, load]);
 
   const rows = useMemo<TimelineRow[]>(() => {
     const sessionById = new Map<string, SessionSummary>();

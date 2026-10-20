@@ -14,9 +14,12 @@ const envSchema = z.object({
   STT_PROVIDER: z.enum(['whisper', 'deepgram']).default('whisper'),
   // OpenAI transcription model ("whisper" provider). gpt-4o-transcribe is far better on Greek than whisper-1.
   STT_MODEL: z.string().default('gpt-4o-transcribe'),
-  // ISO-639-1 language to force (e.g. "el"). Empty detects it per chunk, so notes spoken in
-  // another language (Bulgarian on a trip) are not forced into Greek; the prompt leans to Greek.
-  STT_LANGUAGE: z.string().default(''),
+  // ISO-639-1 language to force. Greek by default: auto-detection turns silence and noise into
+  // invented English ("David Cooper", "I spam") and misreads Greek. "auto" detects per chunk.
+  STT_LANGUAGE: z
+    .string()
+    .default('el')
+    .transform((v) => (v.trim() === '' ? 'el' : v.trim() === 'auto' ? '' : v.trim())),
   OPENAI_API_KEY: z.string().default(''),
   DEEPGRAM_API_KEY: z.string().default(''),
 

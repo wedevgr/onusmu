@@ -86,6 +86,7 @@ async function processEntry(entry: OutboxEntry): Promise<'ok' | 'retry-later' | 
       fileName,
     });
     await remove(entry.id);
+    useSyncStore.getState().markUploaded();
     return 'ok';
   } catch (err) {
     const status = err instanceof ApiError ? err.status : 0;

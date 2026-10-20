@@ -50,7 +50,8 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
   const [sending, setSending] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<string[]>(SUGGESTIONS);
+  // Only questions the server found answers for in the recordings; none until they arrive.
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   // The answer while it is being written: what the server is doing, then the text so far.
   const [live, setLive] = useState<{ status: string; text: string } | null>(null);
   // Questions to ask next, shown under the latest answer.
@@ -103,12 +104,10 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
     api
       .getSuggestions()
       .then((response) => {
-        if (response.suggestions.length > 0) {
-          setSuggestions(response.suggestions.slice(0, SUGGESTIONS.length));
-        }
+        setSuggestions(response.suggestions.slice(0, MAX_SUGGESTIONS));
       })
       .catch(() => {
-        // Keep the static fallback suggestions.
+        // No suggestions rather than generic ones the memory may not answer.
       });
   }, []);
 
@@ -398,11 +397,7 @@ export default function ChatScreen({ navigation, route }: Props): React.JSX.Elem
   );
 }
 
-const SUGGESTIONS = [
-  'Τι συζήτησα σήμερα;',
-  'Σύνοψε την πιο πρόσφατη καταγραφή μου',
-  'Τι είπα ότι πρέπει να κάνω;',
-];
+const MAX_SUGGESTIONS = 3;
 
 const styles = StyleSheet.create({
   flex: {

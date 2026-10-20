@@ -197,6 +197,11 @@ export default function RootNavigator(): React.JSX.Element {
                   component={RemindersScreen}
                   options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
                 />
+                <Stack.Screen
+                  name="Terms"
+                  component={TermsScreen}
+                  options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
+                />
               </>
             )}
           </Stack.Navigator>

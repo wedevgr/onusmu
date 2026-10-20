@@ -7,6 +7,7 @@ import {
   scheduleReminderNotifications,
 } from '../lib/notifications';
 import { refreshBriefings } from '../lib/briefing';
+import { disableCalendarSync, syncCalendar } from '../lib/calendarSync';
 
 interface RemindersState {
   reminders: Reminder[];
@@ -38,6 +39,8 @@ export const useRemindersStore = create<RemindersState & RemindersActions>((set,
     void scheduleReminderNotifications(reminders)
       .catch(() => undefined)
       .then(() => refreshBriefings());
+    // Before the first full load the list is partial, so events must not be removed for it.
+    syncCalendar(reminders, get().loaded);
   };
 
   const replace = (reminder: Reminder): void => {
@@ -85,6 +88,8 @@ export const useRemindersStore = create<RemindersState & RemindersActions>((set,
     clear: () => {
       set({ reminders: [], loaded: false, error: null });
       void cancelReminderNotifications().catch(() => undefined);
+      // Signing out takes the reminders off the phone's calendar too.
+      void disableCalendarSync().catch(() => undefined);
     },
   };
 });
