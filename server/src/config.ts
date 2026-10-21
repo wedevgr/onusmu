@@ -46,6 +46,9 @@ const envSchema = z.object({
   STRIPE_PRICE_UNLIMITED: z.string().default('price_1UQYfLPYhfQFkR1Fxbgj9784'),
   // Where Stripe sends people back to after checkout and the billing portal.
   WEBSITE_URL: z.string().default('http://localhost:3000'),
+
+  // reCAPTCHA secret for website sign-up (/v1/auth/signup). Empty turns that route off.
+  RECAPTCHA_SECRET_KEY: z.string().default(''),
 });
 
 export type Config = z.infer<typeof envSchema>;

@@ -14,6 +14,7 @@ import {
   createNativeStackNavigator,
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack';
+import { completeSignInFromUrl, isAuthCallbackUrl } from '../lib/googleSignIn';
 import { useAuthStore } from '../stores/auth';
 import { brand, darkTheme, lightTheme, useTheme } from '../theme';
 import AuthScreen from '../screens/AuthScreen';
@@ -153,9 +154,14 @@ export default function RootNavigator(): React.JSX.Element {
   // aimemory://record (from a Siri or home-screen shortcut) opens Home and starts recording.
   // The link can arrive before sign-in finishes, so it waits until Home can take it.
   const [pendingLink, setPendingLink] = useState<string | null>(null);
+  // aimemory://auth-callback is the Google sign-in return; it is handled right away, signed out.
   useEffect(() => {
-    void Linking.getInitialURL().then((url) => url && setPendingLink(url));
-    const subscription = Linking.addEventListener('url', ({ url }) => setPendingLink(url));
+    const receive = (url: string): void => {
+      if (isAuthCallbackUrl(url)) void completeSignInFromUrl(url);
+      else setPendingLink(url);
+    };
+    void Linking.getInitialURL().then((url) => url && receive(url));
+    const subscription = Linking.addEventListener('url', ({ url }) => receive(url));
     return () => subscription.remove();
   }, []);
   useEffect(() => {

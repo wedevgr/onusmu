@@ -177,6 +177,8 @@ export type PlanId = 'free' | 'starter' | 'plus' | 'pro' | 'unlimited';
 
 export interface BillingResponse {
   plan: PlanId;
+  // Where the plan was bought: 'stripe', 'manual', 'app_store', 'play_store', or null on Free.
+  provider: string | null;
   period: 'day' | 'month';
   limitSeconds: number | null;
   usedSeconds: number;

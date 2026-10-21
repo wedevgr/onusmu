@@ -16,11 +16,12 @@ import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import * as Crypto from 'expo-crypto';
 import type { RootStackParamList, TabParamList } from '../navigation/RootNavigator';
 import { api } from '../api/client';
-import type { RecordingInsights, SessionSummary } from '../api/types';
+import type { BillingResponse, RecordingInsights, SessionSummary } from '../api/types';
 import { InsightList } from '../components/InsightList';
 import { recorder } from '../lib/recorder';
 import * as outbox from '../lib/outbox';
 import { stopRemoteSession, triggerSync } from '../lib/sync';
+import { canUpgrade, openPlans } from '../lib/upgrade';
 import {
   limitReachedMessage,
   remainingLine,
@@ -149,6 +150,19 @@ export default function HomeScreen({ navigation, route }: Props): React.JSX.Elem
     });
   };
 
+  const alertLimit = (status: BillingResponse, message: string): void => {
+    Alert.alert(
+      'Όριο καταγραφής',
+      message,
+      canUpgrade(status)
+        ? [
+            { text: 'Όχι τώρα', style: 'cancel' },
+            { text: 'Αναβάθμιση', onPress: () => void openPlans(status) },
+          ]
+        : undefined,
+    );
+  };
+
   // openScreen: false for hold-to-talk, which records right here until the finger lifts.
   const startRecording = async ({ openScreen = true }: { openScreen?: boolean } = {}): Promise<void> => {
     setStarting(true);
@@ -157,7 +171,7 @@ export default function HomeScreen({ navigation, route }: Props): React.JSX.Elem
       const status = await useBillingStore.getState().refresh();
       const remainingMs = await remainingRecordingMs(status);
       if (status && remainingMs !== null && remainingMs <= 0) {
-        Alert.alert('Όριο καταγραφής', limitReachedMessage(status));
+        alertLimit(status, limitReachedMessage(status));
         return;
       }
       const startedAt = new Date().toISOString();
@@ -185,7 +199,7 @@ export default function HomeScreen({ navigation, route }: Props): React.JSX.Elem
                 void stopRemoteSession(sessionLocalId, new Date().toISOString());
                 useRecordingStore.getState().markStopped();
                 useRecordingStore.getState().reset();
-                Alert.alert('Όριο καταγραφής', `${limitReachedMessage(status)} Η καταγραφή σταμάτησε και αποθηκεύτηκε.`);
+                alertLimit(status, `${limitReachedMessage(status)} Η καταγραφή σταμάτησε και αποθηκεύτηκε.`);
               },
             }
           : undefined,
@@ -363,6 +377,19 @@ export default function HomeScreen({ navigation, route }: Props): React.JSX.Elem
           <Text style={[typography.caption, styles.errorLine, { color: theme.colors.danger }]}>
             {recording.error}
           </Text>
+        ) : null}
+        {!recording.active && billing && billing.remainingSeconds !== null && billing.remainingSeconds <= 0 && canUpgrade(billing) ? (
+          <Pressable
+            onPress={() => void openPlans(billing)}
+            hitSlop={10}
+            accessibilityRole="link"
+            style={styles.upgradeLink}
+          >
+            <Icon name="zap" size={14} color={theme.colors.text} />
+            <Text style={[typography.caption, styles.upgradeLabel, { color: theme.colors.text }]}>
+              Αναβάθμισε για περισσότερο χρόνο
+            </Text>
+          </Pressable>
         ) : null}
 
         <View
@@ -558,6 +585,16 @@ const styles = StyleSheet.create({
   recorderNote: {
     marginTop: spacing.xs,
     textAlign: 'center',
+  },
+  upgradeLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: spacing.sm,
+  },
+  upgradeLabel: {
+    fontWeight: '600',
   },
   timer: {
     fontSize: 34,

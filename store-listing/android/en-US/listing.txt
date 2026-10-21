@@ -1,0 +1,25 @@
+App name
+onusmu-Your second brain
+
+Short description
+Record your thoughts, search your memories, and ask your second brain.
+
+Full description
+onusmu is your personal second brain. Capture thoughts, conversations, and moments with your voice, then find them again whenever you need them.
+
+RECORD WITHOUT FRICTION
+Start a recording with one tap and keep using your phone while onusmu captures audio in the background. Your recordings are transcribed and organized into a timeline.
+
+SEARCH YOUR MEMORIES
+Search across everything you have recorded. Revisit the exact moment, read the transcript, and check when it happened.
+
+ASK YOUR SECOND BRAIN
+Ask questions in natural language and get concise answers based only on your own recordings. Source citations let you jump back to the original memory.
+
+TURN WORDS INTO ACTION
+Create reminders yourself or keep suggestions generated from things you said you needed to do. Add due dates and receive notifications so intentions do not get lost.
+
+YOUR CONTENT, PROTECTED
+Your audio, transcripts, chats, and reminders are encrypted at rest.
+
+With onusmu, you do not have to hold everything in your head. Record it, find it, and move forward.

@@ -7,6 +7,8 @@ dist/
 .env.*.local
 .DS_Store
 android/
+!store-listing/android/
+!store-listing/android/**
 ios/
 *.tsbuildinfo
 .expo-shared/

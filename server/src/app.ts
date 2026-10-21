@@ -16,6 +16,7 @@ import searchRoutes from './routes/search';
 import sessionRoutes from './routes/sessions';
 import stripeWebhookRoutes from './routes/stripeWebhook';
 import settingsRoutes from './routes/settings';
+import signupRoutes from './routes/signup';
 import suggestionRoutes from './routes/suggestions';
 import uploadRoutes from './routes/uploads';
 
@@ -54,6 +55,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.get('/healthz', async () => ({ ok: true }));
   await app.register(stripeWebhookRoutes);
+  await app.register(signupRoutes, { prefix: '/v1' });
 
   await app.register(
     async (authed) => {

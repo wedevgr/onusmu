@@ -13,7 +13,8 @@
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "https://nwxjcudfggqbarqhunmg.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_jemBu9p9outeLvRBFltWMg_cID48U63",
-        "EXPO_PUBLIC_API_URL": "http://192.168.1.115:8787"
+        "EXPO_PUBLIC_API_URL": "http://192.168.1.115:8787",
+        "EXPO_PUBLIC_WEBSITE_URL": "https://onusmu.com"
       }
     },
     "production": {
@@ -21,7 +22,8 @@
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "https://nwxjcudfggqbarqhunmg.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_jemBu9p9outeLvRBFltWMg_cID48U63",
-        "EXPO_PUBLIC_API_URL": "https://onusmu-production.up.railway.app"
+        "EXPO_PUBLIC_API_URL": "https://onusmu-production.up.railway.app",
+        "EXPO_PUBLIC_WEBSITE_URL": "https://onusmu.com"
       }
     }
   }

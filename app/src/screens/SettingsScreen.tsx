@@ -10,6 +10,7 @@ import { disableCalendarSync, enableCalendarSync, isCalendarSyncEnabled } from '
 import { ensureNotificationPermission } from '../lib/notifications';
 import * as outbox from '../lib/outbox';
 import { triggerSync } from '../lib/sync';
+import { canUpgrade, openPlans } from '../lib/upgrade';
 import { useAuthStore } from '../stores/auth';
 import { useRemindersStore } from '../stores/reminders';
 import { PLAN_NAMES, usageLine, useBillingStore } from '../stores/billing';
@@ -279,6 +280,15 @@ export default function SettingsScreen(): React.JSX.Element {
                 title={PLAN_NAMES[billing.plan]}
                 subtitle={usageLine(billing)}
               />
+              {canUpgrade(billing) ? (
+                <ListRow
+                  icon="zap"
+                  title={billing.plan === 'free' ? 'Αναβάθμιση πλάνου' : 'Αλλαγή πλάνου'}
+                  subtitle="Περισσότερος χρόνος καταγραφής κάθε μέρα."
+                  chevron
+                  onPress={() => void openPlans(billing)}
+                />
+              ) : null}
             </ListGroup>
           </>
         ) : null}
